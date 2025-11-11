@@ -49,14 +49,6 @@
       ]
     }
   ],
-  "env": {
-    "VITE_DJANGO_API_URL": "@django_api_url",
-    "VITE_SUPABASE_URL": "@supabase_url",
-    "VITE_SUPABASE_ANON_KEY": "@supabase_anon_key",
-    "VITE_MAPBOX_ACCESS_TOKEN": "@mapbox_token",
-    "VITE_SENTRY_DSN": "@sentry_dsn",
-    "VITE_GOOGLE_ANALYTICS_ID": "@ga_id"
-  },
   "build": {
     "env": {
       "NODE_ENV": "production"

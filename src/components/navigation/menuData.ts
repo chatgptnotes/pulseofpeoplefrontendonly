@@ -20,6 +20,7 @@ import {
   SmartToy as BotIcon,
   Poll as PollIcon,
   CameraAlt as DataCaptureIcon,
+  Phone as PhoneIcon,
   // Maps
   Map as MapIcon,
   Public as GlobalIcon,
@@ -92,6 +93,12 @@ export const categoryMenuItems: Record<string, MenuItem[]> = {
       name: 'Voter Sentiment Analysis',
       href: '/voter-sentiment-analysis',
       icon: InfluencerIcon,
+      badge: 'AI'
+    },
+    {
+      name: 'Voice Agent Chat',
+      href: '/voice-agent-chat',
+      icon: PhoneIcon,
       badge: 'AI'
     },
     {

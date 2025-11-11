@@ -118,13 +118,20 @@ export default function FeedbackChatbot() {
     }
   ]);
 
-  // Initial bot message
+  // Initial bot message - friendly greeting
   useEffect(() => {
     if (chatMessages.length === 0) {
+      const hour = new Date().getHours();
+      let greeting = 'Hey there! 👋';
+
+      if (hour < 12) greeting = 'Good morning! ☀️';
+      else if (hour < 17) greeting = 'Hey there! 👋';
+      else greeting = 'Good evening! 🌙';
+
       setChatMessages([{
         id: '1',
         type: 'bot',
-        message: 'Hello! I\'m your AI assistant for the Tamil Nadu 2026 elections. I can help you with complaints, questions, feedback, or suggestions. How can I assist you today?',
+        message: `${greeting} I'm your friendly assistant for Tamil Nadu 2026 elections! 😊\n\nI'd love to help you with:\n• 💬 Complaints or concerns\n• ❓ Questions you might have\n• 💭 Feedback to share\n• 💡 Suggestions for improvement\n\nWhat's on your mind today?`,
         timestamp: new Date()
       }]);
     }
@@ -163,27 +170,29 @@ export default function FeedbackChatbot() {
     let response = '';
     let category: 'complaint' | 'faq' | 'feedback' | 'suggestion' | undefined;
 
-    // Determine category and response
+    // Determine category and response with friendly, casual tone
     if (input.includes('complain') || input.includes('problem') || input.includes('issue') || input.includes('delay') || input.includes('bad')) {
       category = 'complaint';
-      response = 'I understand you have a complaint. I\'ve categorized this as a complaint and will ensure it reaches the right department. Can you provide more details about the location and specific issue?';
+      response = 'I hear you, and I\'m really sorry you\'re facing this issue. 💙 Let\'s work on this together!\n\nI\'ve logged your complaint and it\'ll reach the right team ASAP. Could you share a bit more about:\n• Where this happened\n• When it occurred\n• Any other details that might help\n\nWe\'re on it! 💪';
     } else if (input.includes('suggest') || input.includes('idea') || input.includes('improve') || input.includes('recommend')) {
       category = 'suggestion';
-      response = 'Thank you for your suggestion! Your ideas help us improve our services. I\'ve recorded this as a suggestion for the policy team to review. Would you like to add any additional details?';
+      response = 'Wow, love hearing your ideas! 💡✨\n\nYour suggestion has been recorded and our policy team will definitely check it out. Your input helps us do better!\n\nGot more thoughts to share? I\'m all ears! 😊';
     } else if (input.includes('good') || input.includes('happy') || input.includes('satisfied') || input.includes('thank')) {
       category = 'feedback';
-      response = 'Thank you for your positive feedback! It\'s great to hear about your positive experience. I\'ve recorded this feedback for our team. Is there anything specific you\'d like to highlight?';
+      response = 'This made my day! 🌟😊\n\nThanks so much for sharing your positive experience! It really means a lot to the whole team. We love hearing when things go well!\n\nAnything specific you\'d like to highlight? Your feedback helps us keep up the good work! 🙌';
     } else if (input.includes('how') || input.includes('what') || input.includes('when') || input.includes('where') || input.includes('?')) {
       category = 'faq';
       if (input.includes('vote') || input.includes('election')) {
-        response = 'For voting information: Elections are scheduled for 2026. You can vote at your designated polling station with valid ID. Would you like information about voter registration or polling locations?';
+        response = 'Great question! 🗳️\n\nHere\'s what you need to know about voting:\n• Elections are coming up in 2026\n• Bring your valid ID to your polling station\n• Check if you\'re registered to vote\n\nNeed help finding your polling station or want to register? Just let me know! 👍';
       } else if (input.includes('manifesto') || input.includes('policy')) {
-        response = 'You can find detailed manifestos and policies on our platform under the "Manifesto Match" section. This compares party promises with voter expectations. Would you like me to guide you there?';
+        response = 'Awesome that you\'re checking out the policies! 📋\n\nYou can find all the manifestos in our "Manifesto Match" section - it\'s really cool because it compares what parties promise with what voters want.\n\nWant me to walk you through it? 😊';
       } else {
-        response = 'I can help answer questions about voting procedures, candidate information, manifestos, and more. What specific information are you looking for?';
+        response = 'I\'d love to help you out! 😊\n\nI can answer questions about:\n• 🗳️ Voting procedures\n• 👥 Candidate info\n• 📋 Party manifestos\n• 📍 Polling locations\n• ✅ Registration details\n\nWhat would you like to know more about?';
       }
+    } else if (input.includes('hello') || input.includes('hi') || input.includes('hey')) {
+      response = 'Hey! 👋 Great to chat with you!\n\nHow can I help you today? Feel free to ask me anything about the elections, share feedback, or just let me know what\'s on your mind! 😊';
     } else {
-      response = 'I\'m here to help with complaints, questions, feedback, or suggestions related to Tamil Nadu elections 2026. Could you please be more specific about how I can assist you?';
+      response = 'Hmm, I\'m not quite sure I got that! 🤔\n\nNo worries though! I\'m here to help with:\n• 💬 Any complaints or concerns\n• ❓ Questions about elections\n• 💭 Feedback you want to share\n• 💡 Suggestions for improvement\n\nCould you tell me a bit more about what you\'re looking for? 😊';
     }
 
     setCurrentCategory(category);

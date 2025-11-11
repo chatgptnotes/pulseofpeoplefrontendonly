@@ -115,42 +115,128 @@ export default function CompetitorRegistry() {
     }
   }
 
+  // Validate required fields
+  function validateForm(): { isValid: boolean; message: string } {
+    if (!formData.party_name.trim()) {
+      return { isValid: false, message: 'Party Name is required' };
+    }
+    if (!formData.name.trim()) {
+      return { isValid: false, message: 'Display Name is required' };
+    }
+    if (!formData.data_source) {
+      return { isValid: false, message: 'Data Source is required' };
+    }
+    return { isValid: true, message: '' };
+  }
+
+  // Clean form data: convert empty strings to null for optional fields
+  function cleanFormData() {
+    return {
+      name: formData.name.trim(),
+      party_name: formData.party_name.trim(),
+      party_acronym: formData.party_acronym.trim() || null,
+      leader_name: formData.leader_name.trim() || null,
+      color_code: formData.color_code,
+      description: formData.description.trim() || null,
+      state: formData.state.trim() || null,
+      district: formData.district.trim() || null,
+      constituency: formData.constituency.trim() || null,
+      campaign_slogan: formData.campaign_slogan.trim() || null,
+      data_source: formData.data_source,
+      is_active: true,
+    };
+  }
+
   async function handleAddCompetitor() {
+    // Validate form
+    const validation = validateForm();
+    if (!validation.isValid) {
+      alert(validation.message);
+      return;
+    }
+
     try {
-      const { error } = await supabase.from('competitors').insert([{
-        ...formData,
-        is_active: true,
-      }]);
+      const cleanedData = cleanFormData();
+      console.log('🔄 [CompetitorRegistry] Inserting competitor:', cleanedData);
 
-      if (error) throw error;
+      const { data, error } = await supabase
+        .from('competitors')
+        .insert([cleanedData])
+        .select();
 
+      if (error) {
+        console.error('❌ [CompetitorRegistry] Supabase error:', error);
+
+        // Provide specific error messages
+        if (error.code === '23505') {
+          alert('A competitor with this name already exists. Please use a different name.');
+        } else if (error.code === '23502') {
+          alert('Missing required field. Please fill in all required fields marked with *');
+        } else if (error.message) {
+          alert(`Failed to add competitor: ${error.message}`);
+        } else {
+          alert('Failed to add competitor. Please check your input and try again.');
+        }
+        return;
+      }
+
+      console.log('✅ [CompetitorRegistry] Competitor added successfully:', data);
       setShowAddModal(false);
       resetForm();
       await loadCompetitors();
-    } catch (error) {
-      console.error('Failed to add competitor:', error);
-      alert('Failed to add competitor');
+    } catch (error: any) {
+      console.error('💥 [CompetitorRegistry] Unexpected error:', error);
+      alert(`An unexpected error occurred: ${error?.message || 'Unknown error'}`);
     }
   }
 
   async function handleUpdateCompetitor() {
     if (!selectedCompetitor) return;
 
+    // Validate form
+    const validation = validateForm();
+    if (!validation.isValid) {
+      alert(validation.message);
+      return;
+    }
+
     try {
-      const { error } = await supabase
+      const cleanedData = cleanFormData();
+      // Remove is_active since we're updating (keep existing value)
+      const { is_active, ...updateData } = cleanedData;
+
+      console.log('🔄 [CompetitorRegistry] Updating competitor:', selectedCompetitor.id, updateData);
+
+      const { data, error } = await supabase
         .from('competitors')
-        .update(formData)
-        .eq('id', selectedCompetitor.id);
+        .update(updateData)
+        .eq('id', selectedCompetitor.id)
+        .select();
 
-      if (error) throw error;
+      if (error) {
+        console.error('❌ [CompetitorRegistry] Supabase error:', error);
 
+        // Provide specific error messages
+        if (error.code === '23505') {
+          alert('A competitor with this name already exists. Please use a different name.');
+        } else if (error.code === '23502') {
+          alert('Missing required field. Please fill in all required fields marked with *');
+        } else if (error.message) {
+          alert(`Failed to update competitor: ${error.message}`);
+        } else {
+          alert('Failed to update competitor. Please check your input and try again.');
+        }
+        return;
+      }
+
+      console.log('✅ [CompetitorRegistry] Competitor updated successfully:', data);
       setShowEditModal(false);
       setSelectedCompetitor(null);
       resetForm();
       await loadCompetitors();
-    } catch (error) {
-      console.error('Failed to update competitor:', error);
-      alert('Failed to update competitor');
+    } catch (error: any) {
+      console.error('💥 [CompetitorRegistry] Unexpected error:', error);
+      alert(`An unexpected error occurred: ${error?.message || 'Unknown error'}`);
     }
   }
 

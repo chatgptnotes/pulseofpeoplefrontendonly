@@ -519,6 +519,201 @@ export async function getSentimentTrends(days: number = 30): Promise<any[]> {
   }
 }
 
+/**
+ * Fetch comprehensive dashboard data for export
+ * @param dateRange - Time range for data filtering
+ */
+export async function getDashboardData(dateRange: 'today' | 'week' | 'month' | 'quarter' | 'all' = 'week') {
+  try {
+    // Calculate date range in days
+    let daysAgo = 7; // default week
+    switch (dateRange) {
+      case 'today':
+        daysAgo = 1;
+        break;
+      case 'week':
+        daysAgo = 7;
+        break;
+      case 'month':
+        daysAgo = 30;
+        break;
+      case 'quarter':
+        daysAgo = 90;
+        break;
+      case 'all':
+        daysAgo = 365; // 1 year of data
+        break;
+    }
+
+    // Fetch all data in parallel
+    const [
+      metrics,
+      locationSentiment,
+      issueSentiment,
+      trendingTopics,
+      alerts,
+      socialPosts,
+      platformDistribution,
+      sentimentDistribution,
+      sentimentTrends
+    ] = await Promise.all([
+      getDashboardMetrics(),
+      getLocationSentiment(),
+      getIssueSentiment(),
+      getTrendingTopics(20),
+      getActiveAlerts(50),
+      getRecentSocialPosts(100),
+      getPlatformDistribution(),
+      getSentimentDistribution(),
+      getSentimentTrends(Math.min(daysAgo, 30)) // Max 30 days for trends
+    ]);
+
+    // Format data for export
+    return {
+      dateRange,
+      generatedAt: new Date().toISOString(),
+
+      // Summary section
+      summary: {
+        totalSentiments: metrics.activeConversations,
+        positive: sentimentDistribution.positive,
+        neutral: sentimentDistribution.neutral,
+        negative: sentimentDistribution.negative,
+        overallScore: metrics.overallSentiment,
+        constituenciesCovered: metrics.constituenciesCovered,
+        criticalAlerts: metrics.criticalAlerts
+      },
+
+      // Sentiment Analysis section
+      sentimentAnalysis: {
+        overall: metrics.sentimentTrend === 'improving' ? 'Positive' :
+                metrics.sentimentTrend === 'declining' ? 'Negative' : 'Neutral',
+        confidence: metrics.overallSentiment,
+        positiveCount: Math.round((metrics.activeConversations * sentimentDistribution.positive) / 100),
+        neutralCount: Math.round((metrics.activeConversations * sentimentDistribution.neutral) / 100),
+        negativeCount: Math.round((metrics.activeConversations * sentimentDistribution.negative) / 100),
+        trend: metrics.sentimentTrend,
+        topIssue: metrics.topIssue
+      },
+
+      // Trending Topics section
+      trendingTopics: trendingTopics.map((topic, index) => ({
+        rank: index + 1,
+        name: topic.keyword,
+        topic: topic.keyword,
+        count: topic.volume,
+        mentions: topic.volume,
+        sentiment: topic.sentiment_score > 0.6 ? 'Positive' :
+                  topic.sentiment_score < 0.4 ? 'Negative' : 'Neutral',
+        sentimentScore: Math.round(topic.sentiment_score * 100),
+        growth: `${topic.growth_rate > 0 ? '+' : ''}${Math.round(topic.growth_rate * 100)}%`,
+        platforms: topic.platforms.join(', ')
+      })),
+
+      // Geographic Data section
+      geographicData: locationSentiment.reduce((acc, location) => {
+        acc[location.title] = {
+          total: location.ward_count || 0,
+          positive: Math.round(location.sentiment * 100),
+          neutral: Math.round((1 - location.sentiment) * 50),
+          negative: Math.round((1 - location.sentiment) * 50),
+          avgSentiment: location.sentiment,
+          wards: location.ward_count
+        };
+        return acc;
+      }, {} as any),
+
+      // Alerts section
+      alerts: alerts.map(alert => ({
+        timestamp: alert.timestamp,
+        severity: alert.severity,
+        message: alert.description,
+        title: alert.title,
+        status: 'Active',
+        type: alert.type,
+        location: alert.ward || alert.district || 'N/A'
+      })),
+
+      // Social Media section
+      socialMedia: {
+        totalPosts: socialPosts.length,
+        platformDistribution,
+        recentPosts: socialPosts.slice(0, 20).map(post => ({
+          platform: post.platform,
+          content: post.content.substring(0, 200) + (post.content.length > 200 ? '...' : ''),
+          author: post.author_name,
+          sentiment: post.sentiment_polarity,
+          engagement: post.likes + post.shares + post.comments,
+          likes: post.likes,
+          shares: post.shares,
+          comments: post.comments,
+          timestamp: post.timestamp
+        })),
+        topPlatform: Object.entries(platformDistribution).sort((a, b) => b[1] - a[1])[0]?.[0] || 'Unknown'
+      },
+
+      // Issue Breakdown section
+      issueBreakdown: issueSentiment.map(issue => ({
+        issue: issue.issue,
+        volume: issue.volume,
+        sentiment: Math.round(issue.sentiment * 100),
+        trend: issue.trend,
+        positive: issue.polarity.positive,
+        neutral: issue.polarity.neutral,
+        negative: issue.polarity.negative
+      })),
+
+      // Recommendations section
+      recommendations: generateRecommendations(metrics, issueSentiment, alerts)
+    };
+  } catch (error) {
+    console.error('Error fetching dashboard data for export:', error);
+    throw error;
+  }
+}
+
+/**
+ * Generate AI recommendations based on dashboard data
+ */
+function generateRecommendations(
+  metrics: DashboardMetrics,
+  issues: IssueSentiment[],
+  alerts: ActiveAlert[]
+): string[] {
+  const recommendations: string[] = [];
+
+  // Sentiment-based recommendations
+  if (metrics.sentimentTrend === 'declining') {
+    recommendations.push('Overall sentiment is declining. Focus on addressing top concerns and improving communication.');
+  } else if (metrics.sentimentTrend === 'improving') {
+    recommendations.push('Sentiment is improving. Continue current strategies and expand successful initiatives.');
+  }
+
+  // Issue-based recommendations
+  const topIssue = issues[0];
+  if (topIssue && topIssue.sentiment < 0.5) {
+    recommendations.push(`"${topIssue.issue}" shows negative sentiment (${Math.round(topIssue.sentiment * 100)}%). Prioritize addressing this issue.`);
+  }
+
+  // Alert-based recommendations
+  const criticalAlerts = alerts.filter(a => a.severity === 'critical');
+  if (criticalAlerts.length > 0) {
+    recommendations.push(`${criticalAlerts.length} critical alerts require immediate attention. Review and respond promptly.`);
+  }
+
+  // Volume-based recommendations
+  if (metrics.activeConversations < 100) {
+    recommendations.push('Low conversation volume detected. Consider increasing engagement efforts and outreach activities.');
+  }
+
+  // Default recommendation if none generated
+  if (recommendations.length === 0) {
+    recommendations.push('Continue monitoring sentiment trends and engage with key issues proactively.');
+  }
+
+  return recommendations;
+}
+
 export const dashboardService = {
   getDashboardMetrics,
   getLocationSentiment,
@@ -530,4 +725,5 @@ export const dashboardService = {
   getSentimentContext,
   getSentimentDistribution,
   getSentimentTrends,
+  getDashboardData, // New comprehensive export method
 };

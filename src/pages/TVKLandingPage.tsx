@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { useEffect } from 'react';
 import { Link } from 'react-router-dom';
 import {
   TrendingUp,
@@ -18,6 +18,22 @@ import {
 import { TVKLogo } from '../components/TVKLogo';
 
 const TVKLandingPage = () => {
+  // Load ElevenLabs ConvAI widget script
+  useEffect(() => {
+    const script = document.createElement('script');
+    script.src = 'https://unpkg.com/@elevenlabs/convai-widget-embed';
+    script.async = true;
+    script.type = 'text/javascript';
+    document.body.appendChild(script);
+
+    return () => {
+      // Cleanup script on unmount
+      if (document.body.contains(script)) {
+        document.body.removeChild(script);
+      }
+    };
+  }, []);
+
   return (
     <div className="min-h-screen bg-gradient-to-br from-red-50 via-yellow-50 to-red-50">
       {/* Header Navigation */}
@@ -442,6 +458,11 @@ const TVKLandingPage = () => {
           </div>
         </div>
       </footer>
+
+      {/* ElevenLabs Voice Agent Widget */}
+      <elevenlabs-convai
+        agent-id={import.meta.env.VITE_ELEVENLABS_AGENT_ID || 'agent_2501k9rprn1de53rm33gjv0hx84e'}
+      />
     </div>
   );
 };

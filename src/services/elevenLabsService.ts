@@ -183,8 +183,38 @@ class ElevenLabsService {
    * @returns Formatted transcript string
    */
   private formatTranscript(data: any): string {
-    if (data.transcript) {
+    // Debug logging to understand API response structure
+    console.log('[ElevenLabs] Formatting transcript, data structure:', {
+      hasTranscript: !!data.transcript,
+      transcriptType: typeof data.transcript,
+      isTranscriptArray: Array.isArray(data.transcript),
+      hasMessages: !!data.messages,
+      hasTurns: !!data.turns,
+      sampleKeys: data.transcript && Array.isArray(data.transcript) && data.transcript.length > 0
+        ? Object.keys(data.transcript[0]).slice(0, 10)
+        : []
+    });
+
+    // Check if transcript exists and is already a string
+    if (data.transcript && typeof data.transcript === 'string') {
       return data.transcript;
+    }
+
+    // Handle transcript as an array of conversation turn objects (ElevenLabs actual format)
+    if (data.transcript && Array.isArray(data.transcript)) {
+      return data.transcript
+        .map((turn: any) => {
+          const role = turn.role === 'agent' ? 'Agent' : 'Voter';
+          // Check multiple possible fields for the actual message text
+          const message = turn.message || turn.content || turn.text || '';
+          return `${role}: ${message}`;
+        })
+        .filter(line => {
+          // Filter out empty messages
+          const trimmed = line.trim();
+          return trimmed !== 'Agent:' && trimmed !== 'Voter:';
+        })
+        .join('\n\n');
     }
 
     // If transcript is in messages format
@@ -192,7 +222,12 @@ class ElevenLabsService {
       return data.messages
         .map((msg: any) => {
           const role = msg.role === 'agent' ? 'Agent' : 'Voter';
-          return `${role}: ${msg.content || msg.message}`;
+          const message = msg.content || msg.message || msg.text || '';
+          return `${role}: ${message}`;
+        })
+        .filter(line => {
+          const trimmed = line.trim();
+          return trimmed !== 'Agent:' && trimmed !== 'Voter:';
         })
         .join('\n\n');
     }
@@ -201,13 +236,15 @@ class ElevenLabsService {
     if (data.turns && Array.isArray(data.turns)) {
       return data.turns
         .map((turn: any) => {
-          const speaker = turn.speaker || turn.role;
-          const text = turn.text || turn.content;
+          const speaker = turn.speaker || turn.role || 'Unknown';
+          const text = turn.text || turn.content || turn.message || '';
           return `${speaker}: ${text}`;
         })
+        .filter(line => !line.endsWith(': '))
         .join('\n\n');
     }
 
+    console.warn('[ElevenLabs] Could not format transcript, unknown structure');
     return 'Transcript not available';
   }
 

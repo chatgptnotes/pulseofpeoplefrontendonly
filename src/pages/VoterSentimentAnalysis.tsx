@@ -52,8 +52,10 @@ const VoterSentimentAnalysis: React.FC = () => {
   const { user } = useAuth();
   const { currentOrganization } = useTenant();
 
-  // DEV MODE: Use user's organization_id or a development fallback
-  const organizationId = currentOrganization?.id || user?.organization_id || 'dev-org-id';
+  // DEV MODE: Use user's organization_id or a development fallback (valid UUID)
+  // Using a fixed UUID for development: represents "Development Organization"
+  const DEV_ORG_ID = '00000000-0000-0000-0000-000000000001';
+  const organizationId = currentOrganization?.id || user?.organization_id || DEV_ORG_ID;
 
   useEffect(() => {
     // Check if ElevenLabs is configured

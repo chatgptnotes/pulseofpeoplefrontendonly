@@ -29,6 +29,7 @@ import {
 import { elevenLabsService } from '../../services/elevenLabsService';
 import { voterSentimentService } from '../../services/voterSentimentService';
 import { voterCallsService } from '../../services/voterCallsService';
+import { callPollingService } from '../../services/callPollingService';
 import type { VoterCall, CallSentimentAnalysis } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 
@@ -53,7 +54,22 @@ const SingleCallTest: React.FC<SingleCallTestProps> = ({
   const [sentimentAnalysis, setSentimentAnalysis] = useState<CallSentimentAnalysis | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [isPolling, setIsPolling] = useState(false);
+  const [pollingStatus, setPollingStatus] = useState<any>(null);
+  const [isManualRefreshing, setIsManualRefreshing] = useState(false);
   const { showToast } = useToast();
+
+  // Update polling status periodically
+  useEffect(() => {
+    const updateStatus = () => {
+      const status = callPollingService.getStatus();
+      setPollingStatus(status);
+    };
+
+    updateStatus();
+    const statusInterval = setInterval(updateStatus, 5000); // Update every 5 seconds
+
+    return () => clearInterval(statusInterval);
+  }, []);
 
   // Poll for call status
   useEffect(() => {
@@ -72,15 +88,18 @@ const SingleCallTest: React.FC<SingleCallTestProps> = ({
           elevenlabs_metadata: status,
         });
 
-        // Check if call is completed
-        if (status.status === 'completed' || status.status === 'ended') {
+        // Check if call is completed (handle all possible completion statuses from ElevenLabs)
+        const completionStatuses = ['completed', 'ended', 'finished', 'done'];
+        const failureStatuses = ['failed', 'error', 'canceled', 'cancelled'];
+
+        if (completionStatuses.includes(status.status?.toLowerCase())) {
           setIsPolling(false);
           setCallStatus('fetching_transcript');
           await fetchTranscriptAndAnalyze(currentCall.call_id);
-        } else if (status.status === 'failed' || status.status === 'error') {
+        } else if (failureStatuses.includes(status.status?.toLowerCase())) {
           setIsPolling(false);
           setCallStatus('failed');
-          setError(status.error_message || 'Call failed');
+          setError(status.error_message || `Call ${status.status}`);
         }
       } catch (err) {
         console.error('Error polling call status:', err);
@@ -262,8 +281,55 @@ const SingleCallTest: React.FC<SingleCallTestProps> = ({
     }
   };
 
+  const handleManualRefresh = async () => {
+    if (!currentCall?.call_id) return;
+
+    setIsManualRefreshing(true);
+    try {
+      showToast('Fetching latest transcript...', 'info');
+      await fetchTranscriptAndAnalyze(currentCall.call_id);
+      showToast('Transcript refreshed successfully!', 'success');
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : 'Failed to refresh transcript';
+      showToast(errorMsg, 'error');
+    } finally {
+      setIsManualRefreshing(false);
+    }
+  };
+
+  const formatTimeSince = (date: Date) => {
+    const seconds = Math.floor((new Date().getTime() - date.getTime()) / 1000);
+    if (seconds < 60) return `${seconds}s ago`;
+    const minutes = Math.floor(seconds / 60);
+    if (minutes < 60) return `${minutes}m ago`;
+    const hours = Math.floor(minutes / 60);
+    return `${hours}h ago`;
+  };
+
   return (
     <Box>
+      {/* Polling Status Info */}
+      {pollingStatus && (
+        <Alert
+          severity="info"
+          sx={{ mb: 3 }}
+          action={
+            <Button
+              color="inherit"
+              size="small"
+              onClick={() => callPollingService.triggerPoll()}
+              startIcon={<RefreshIcon />}
+            >
+              Poll Now
+            </Button>
+          }
+        >
+          <AlertTitle>Background Polling Active</AlertTitle>
+          Automatically checking for completed calls every {pollingStatus.pollingIntervalSeconds}s.
+          Last poll: {pollingStatus.lastPollTime ? formatTimeSince(new Date(pollingStatus.lastPollTime)) : 'Never'}
+        </Alert>
+      )}
+
       <Grid container spacing={3}>
         {/* Input Section */}
         <Grid item xs={12} md={6}>
@@ -425,9 +491,22 @@ const SingleCallTest: React.FC<SingleCallTestProps> = ({
           <Grid item xs={12}>
             <Card elevation={2}>
               <CardContent>
-                <Typography variant="h6" gutterBottom>
-                  Call Transcript
-                </Typography>
+                <Box sx={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', mb: 2 }}>
+                  <Typography variant="h6">
+                    Call Transcript
+                  </Typography>
+                  {currentCall && (
+                    <Button
+                      size="small"
+                      variant="outlined"
+                      startIcon={isManualRefreshing ? <CircularProgress size={16} /> : <RefreshIcon />}
+                      onClick={handleManualRefresh}
+                      disabled={isManualRefreshing || callStatus === 'fetching_transcript' || callStatus === 'analyzing'}
+                    >
+                      {isManualRefreshing ? 'Refreshing...' : 'Refresh Transcript'}
+                    </Button>
+                  )}
+                </Box>
                 <Paper
                   variant="outlined"
                   sx={{

@@ -1,6 +1,6 @@
 import React, { useEffect, useState } from 'react';
 import { useTenant } from '../contexts/TenantContext';
-import TVKLandingPage from './TVKLandingPage';
+import LandingPage from './LandingPage';
 
 export default function TenantLandingPage() {
   const { tenantSlug, tenantConfig } = useTenant();
@@ -23,6 +23,6 @@ export default function TenantLandingPage() {
     );
   }
 
-  // Always render TVK landing page (single-tenant mode)
-  return <TVKLandingPage />;
+  // Render generic landing page
+  return <LandingPage />;
 }

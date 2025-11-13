@@ -28,6 +28,9 @@ import { useAuth } from '../contexts/AuthContext';
 import { votersService } from '../services/supabase/voters.service';
 import type { VoterInsert } from '../types/database';
 import { supabase } from '../lib/supabase';
+import tamilNaduGeoJSON from '../data/geo/tamilnadu-constituencies-full.json';
+import * as XLSX from 'xlsx';
+import { validateImportBatch, generateImportSummary } from '../utils/importValidation';
 
 export default function VoterDatabase() {
   const { user } = useAuth();
@@ -39,6 +42,14 @@ export default function VoterDatabase() {
   const [errorMessage, setErrorMessage] = useState('');
   const [loading, setLoading] = useState(false);
   const [showSuccess, setShowSuccess] = useState(false);
+  const [successMessage, setSuccessMessage] = useState('');
+
+  // Import/Export state
+  const [importProgress, setImportProgress] = useState(0);
+  const [exportProgress, setExportProgress] = useState(0);
+  const [isImporting, setIsImporting] = useState(false);
+  const [isExporting, setIsExporting] = useState(false);
+  const fileInputRef = React.useRef<HTMLInputElement>(null);
 
   // Real database stats
   const [stats, setStats] = useState({
@@ -51,11 +62,17 @@ export default function VoterDatabase() {
   });
   const [votersList, setVotersList] = useState<any[]>([]);
 
+  // Pagination state
+  const [currentPage, setCurrentPage] = useState(1);
+  const [itemsPerPage, setItemsPerPage] = useState(10);
+
   // Chart data states
   const [demographicData, setDemographicData] = useState<any[]>([]);
   const [supportLevelChartData, setSupportLevelChartData] = useState<any[]>([]);
   const [boothWiseChartData, setBoothWiseChartData] = useState<any[]>([]);
   const [voterInterests, setVoterInterests] = useState<any[]>([]);
+  const [contactMethodStats, setContactMethodStats] = useState<any[]>([]);
+  const [geographicCoverage, setGeographicCoverage] = useState<any[]>([]);
 
   // Fetch all real data from Supabase
   useEffect(() => {
@@ -65,6 +82,8 @@ export default function VoterDatabase() {
     fetchSupportLevelData();
     fetchBoothWiseData();
     fetchVoterInterests();
+    fetchContactMethodStats();
+    fetchGeographicCoverage();
   }, []);
 
   const fetchDatabaseStats = async () => {
@@ -344,6 +363,117 @@ export default function VoterDatabase() {
     }
   };
 
+  const fetchContactMethodStats = async () => {
+    try {
+      // Query voter_interactions table
+      const { data, error } = await supabase
+        .from('voter_interactions')
+        .select('interaction_type, sentiment');
+
+      if (error) {
+        console.error('Error fetching contact method stats:', error);
+        return;
+      }
+
+      // Count by interaction type and calculate success
+      const methodCounts: { [key: string]: { total: number; successful: number } } = {};
+
+      data?.forEach((interaction) => {
+        const type = interaction.interaction_type || 'unknown';
+        if (!methodCounts[type]) {
+          methodCounts[type] = { total: 0, successful: 0 };
+        }
+        methodCounts[type].total += 1;
+        if (interaction.sentiment === 'positive') {
+          methodCounts[type].successful += 1;
+        }
+      });
+
+      // Transform to display format
+      const methodDisplayNames: { [key: string]: string } = {
+        'phone_call': 'Phone Call',
+        'door_visit': 'Door-to-door',
+        'whatsapp': 'WhatsApp',
+        'event_meeting': 'Rally',
+        'sms': 'SMS',
+        'email': 'Email'
+      };
+
+      const statsArray = Object.entries(methodCounts)
+        .map(([type, stats]) => ({
+          method: methodDisplayNames[type] || type,
+          success: stats.total > 0 ? Math.round((stats.successful / stats.total) * 100) : 0,
+          attempts: stats.total
+        }))
+        .filter(stat => stat.attempts > 0) // Only show methods with attempts
+        .sort((a, b) => b.success - a.success); // Sort by success rate
+
+      setContactMethodStats(statsArray);
+    } catch (error) {
+      console.error('Error fetching contact method stats:', error);
+    }
+  };
+
+  const fetchGeographicCoverage = async () => {
+    try {
+      // Fetch all active voters with ward and interaction data
+      const { data, error } = await supabase
+        .from('voters')
+        .select('ward, interaction_count')
+        .eq('is_active', true);
+
+      if (error) {
+        console.error('Error fetching geographic coverage:', error);
+        return;
+      }
+
+      // Classify by area type based on ward name
+      const areaCounts: { [key: string]: { total: number; contacted: number } } = {
+        'urban': { total: 0, contacted: 0 },
+        'semi_urban': { total: 0, contacted: 0 },
+        'rural': { total: 0, contacted: 0 }
+      };
+
+      data?.forEach((voter) => {
+        const ward = (voter.ward || '').toLowerCase();
+        let areaType = 'rural'; // default
+
+        if (ward.includes('urban') && !ward.includes('semi')) {
+          areaType = 'urban';
+        } else if (ward.includes('semi') || ward.includes('semi-urban')) {
+          areaType = 'semi_urban';
+        } else if (ward.includes('rural')) {
+          areaType = 'rural';
+        }
+
+        areaCounts[areaType].total += 1;
+        if (voter.interaction_count && voter.interaction_count > 0) {
+          areaCounts[areaType].contacted += 1;
+        }
+      });
+
+      // Transform to display format
+      const areaDisplayNames: { [key: string]: string } = {
+        'urban': 'Urban Areas',
+        'semi_urban': 'Semi-Urban',
+        'rural': 'Rural Areas'
+      };
+
+      const coverageArray = Object.entries(areaCounts)
+        .map(([areaType, stats]) => ({
+          area: areaDisplayNames[areaType],
+          coverage: stats.total > 0 ? Math.round((stats.contacted / stats.total) * 100) : 0,
+          voters: stats.total
+        }))
+        .filter(stat => stat.voters > 0) // Only show areas with voters
+        .sort((a, b) => b.coverage - a.coverage); // Sort by coverage
+
+      setGeographicCoverage(coverageArray);
+    } catch (error) {
+      console.error('Error fetching geographic coverage:', error);
+    }
+  };
+
   // Debug: Log user state
   useEffect(() => {
     console.log('=== VOTER DATABASE DEBUG ===');
@@ -372,6 +502,28 @@ export default function VoterDatabase() {
     address: '',
     interests: [] as string[]
   });
+
+  // Constituency search state
+  const [constituencySearch, setConstituencySearch] = useState('');
+
+  // Extract all constituencies from GeoJSON and sort alphabetically
+  const allConstituencies = (tamilNaduGeoJSON as any).features
+    .map((feature: any) => ({
+      code: `TN${String(Math.floor(feature.properties.AC_NO)).padStart(3, '0')}`,
+      name: feature.properties.AC_NAME,
+      district: feature.properties.DIST_NAME,
+      acNumber: feature.properties.AC_NO
+    }))
+    .sort((a: any, b: any) => a.name.localeCompare(b.name));
+
+  // Filter constituencies based on search term
+  const filteredConstituencies = constituencySearch
+    ? allConstituencies.filter((c: any) =>
+        c.name.toLowerCase().includes(constituencySearch.toLowerCase()) ||
+        c.code.toLowerCase().includes(constituencySearch.toLowerCase()) ||
+        c.district.toLowerCase().includes(constituencySearch.toLowerCase())
+      )
+    : allConstituencies;
 
   // Mock voter database
   const voterDatabase = [
@@ -497,6 +649,17 @@ export default function VoterDatabase() {
     return matchesSearch && matchesFilter;
   });
 
+  // Pagination logic
+  const totalPages = Math.ceil(filteredVoters.length / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = startIndex + itemsPerPage;
+  const paginatedVoters = filteredVoters.slice(startIndex, endIndex);
+
+  // Reset to page 1 when search/filter changes
+  React.useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, selectedFilter]);
+
   // Handle interest checkbox toggle
   const handleInterestToggle = (interest: string) => {
     setFormData(prev => ({
@@ -511,6 +674,15 @@ export default function VoterDatabase() {
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLSelectElement | HTMLTextAreaElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
+  };
+
+  // Handle constituency selection - updates both form data and search box
+  const handleConstituencySelect = (e: React.ChangeEvent<HTMLSelectElement>) => {
+    const selectedValue = e.target.value;
+    // Update form data
+    setFormData(prev => ({ ...prev, constituency: selectedValue }));
+    // Update search box to show selected constituency
+    setConstituencySearch(selectedValue);
   };
 
   // Reset form
@@ -537,10 +709,10 @@ export default function VoterDatabase() {
   const handleAddVoter = async (e: React.FormEvent) => {
     e.preventDefault();
 
-    // Check if user has organization_id (skip for admins who have all rights)
-    const isAdmin = user?.role === 'admin' || user?.role === 'superadmin' || user?.is_super_admin;
-    if (!user?.organization_id && !isAdmin) {
-      setErrorMessage('Error: You must be logged in with a valid organization to add voters.');
+    // Check if user is logged in and has permission to add voters
+    // Note: Admin, superadmin, and manager roles have permission per RLS policy
+    if (!user) {
+      setErrorMessage('Error: You must be logged in to add voters.');
       setShowError(true);
       return;
     }
@@ -575,7 +747,7 @@ export default function VoterDatabase() {
 
         // Address - corrected field names
         address_line1: formData.address || null,     // Changed from address
-        ward: formData.constituency,                  // Using constituency as ward for now
+        ward: formData.booth || null,                 // Polling booth number stored in ward field
 
         // Demographics - now saving to database
         caste: formData.caste || null,
@@ -616,6 +788,8 @@ export default function VoterDatabase() {
       fetchSupportLevelData();
       fetchBoothWiseData();
       fetchVoterInterests();
+      fetchContactMethodStats();
+      fetchGeographicCoverage();
 
       // Hide success message after 3 seconds
       setTimeout(() => {
@@ -629,6 +803,303 @@ export default function VoterDatabase() {
     } finally {
       setLoading(false);
     }
+  };
+
+  // Export Database to Excel
+  const handleExportDatabase = async () => {
+    if (!user) {
+      setErrorMessage('You must be logged in to export data.');
+      setShowError(true);
+      return;
+    }
+
+    setIsExporting(true);
+    setExportProgress(0);
+
+    try {
+      // Fetch all voters
+      setExportProgress(20);
+      const voters = await votersService.getAllForExport();
+
+      setExportProgress(60);
+
+      // Transform data for export with user-friendly column names
+      const exportData = voters.map(voter => ({
+        'Voter ID': voter.voter_id || '',
+        'First Name': voter.first_name || '',
+        'Last Name': voter.last_name || '',
+        'Middle Name': voter.middle_name || '',
+        'Age': voter.age || '',
+        'Gender': voter.gender ? voter.gender.charAt(0).toUpperCase() + voter.gender.slice(1) : '',
+        'Date of Birth': voter.date_of_birth || '',
+        'Phone': voter.phone || '',
+        'Alternate Phone': voter.alternate_phone || '',
+        'Email': voter.email || '',
+        'Caste': voter.caste || '',
+        'Religion': voter.religion || '',
+        'Education': voter.education || '',
+        'Occupation': voter.occupation || '',
+        'Booth': voter.booth_number || voter.ward || '',
+        'Ward': voter.ward || '',
+        'Pincode': voter.pincode || '',
+        'Address Line 1': voter.address_line1 || '',
+        'Address Line 2': voter.address_line2 || '',
+        'Party Affiliation': voter.party_affiliation || '',
+        'Sentiment': voter.sentiment ? voter.sentiment.charAt(0).toUpperCase() + voter.sentiment.slice(1) : '',
+        'Influence Level': voter.influence_level ? voter.influence_level.charAt(0).toUpperCase() + voter.influence_level.slice(1) : '',
+        'Tags': Array.isArray(voter.tags) ? voter.tags.join(', ') : '',
+        'Is Opinion Leader': voter.is_opinion_leader ? 'Yes' : 'No',
+        'Is Active': voter.is_active ? 'Yes' : 'No',
+        'Notes': voter.notes || '',
+        'Created At': voter.created_at ? new Date(voter.created_at).toLocaleString() : ''
+      }));
+
+      setExportProgress(80);
+
+      // Create Excel workbook
+      const worksheet = XLSX.utils.json_to_sheet(exportData);
+      const workbook = XLSX.utils.book_new();
+      XLSX.utils.book_append_sheet(workbook, worksheet, 'Voters');
+
+      // Auto-size columns
+      const maxWidths: { [key: string]: number } = {};
+      exportData.forEach(row => {
+        Object.keys(row).forEach(key => {
+          const value = String(row[key as keyof typeof row]);
+          maxWidths[key] = Math.max(maxWidths[key] || 10, value.length, key.length);
+        });
+      });
+      worksheet['!cols'] = Object.keys(exportData[0] || {}).map(key => ({
+        wch: Math.min(maxWidths[key] || 10, 50)
+      }));
+
+      // Generate filename with timestamp
+      const timestamp = new Date().toISOString().split('T')[0];
+      const filename = `voters-database-${timestamp}.xlsx`;
+
+      // Download file
+      XLSX.writeFile(workbook, filename);
+
+      setExportProgress(100);
+      setSuccessMessage(`Successfully exported ${exportData.length} voters to ${filename}`);
+      setShowSuccess(true);
+
+      setTimeout(() => {
+        setShowSuccess(false);
+        setExportProgress(0);
+      }, 3000);
+
+    } catch (error: any) {
+      console.error('Error exporting database:', error);
+      setErrorMessage(`Export failed: ${error.message || 'Unknown error'}`);
+      setShowError(true);
+    } finally {
+      setIsExporting(false);
+    }
+  };
+
+  // Import Data from Excel
+  const handleImportData = () => {
+    if (!user) {
+      setErrorMessage('You must be logged in to import data.');
+      setShowError(true);
+      return;
+    }
+
+    // Trigger file input
+    fileInputRef.current?.click();
+  };
+
+  const handleFileSelected = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validate file type
+    if (!file.name.endsWith('.xlsx') && !file.name.endsWith('.xls')) {
+      setErrorMessage('Please upload an Excel file (.xlsx or .xls)');
+      setShowError(true);
+      return;
+    }
+
+    // Validate file size (max 10MB)
+    if (file.size > 10 * 1024 * 1024) {
+      setErrorMessage('File size must be less than 10MB');
+      setShowError(true);
+      return;
+    }
+
+    setIsImporting(true);
+    setImportProgress(0);
+
+    try {
+      // Read file
+      setImportProgress(10);
+      const data = await file.arrayBuffer();
+      const workbook = XLSX.read(data);
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const jsonData = XLSX.utils.sheet_to_json(worksheet);
+
+      if (jsonData.length === 0) {
+        throw new Error('No data found in the uploaded file');
+      }
+
+      setImportProgress(30);
+
+      // Validate and transform data
+      const { valid, errors } = validateImportBatch(jsonData);
+
+      if (errors.length > 0 && valid.length === 0) {
+        // All rows have errors
+        const errorSummary = errors.slice(0, 5).map(e =>
+          `Row ${e.row}: ${e.field} - ${e.message}`
+        ).join('\n');
+        throw new Error(`Validation errors:\n${errorSummary}${errors.length > 5 ? `\n...and ${errors.length - 5} more errors` : ''}`);
+      }
+
+      setImportProgress(50);
+
+      // Import valid voters
+      const result = await votersService.bulkCreate(valid);
+
+      setImportProgress(90);
+
+      // Generate summary message
+      const summary = generateImportSummary(
+        jsonData.length,
+        result.success,
+        result.duplicates,
+        result.errors + errors.length
+      );
+
+      setSuccessMessage(`Import complete! ${summary}`);
+      setShowSuccess(true);
+
+      // Refresh all data
+      fetchDatabaseStats();
+      fetchVotersList();
+      fetchDemographicData();
+      fetchSupportLevelData();
+      fetchBoothWiseData();
+      fetchVoterInterests();
+      fetchContactMethodStats();
+      fetchGeographicCoverage();
+
+      setImportProgress(100);
+
+      setTimeout(() => {
+        setShowSuccess(false);
+        setImportProgress(0);
+      }, 5000);
+
+    } catch (error: any) {
+      console.error('Error importing data:', error);
+      setErrorMessage(`Import failed: ${error.message || 'Unknown error'}`);
+      setShowError(true);
+    } finally {
+      setIsImporting(false);
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    }
+  };
+
+  // Download Import Template
+  const handleDownloadTemplate = () => {
+    // Create sample data with all required and optional fields
+    const templateData = [
+      {
+        'Voter ID': 'ABC1234567',
+        'First Name': 'Rajesh',
+        'Last Name': 'Kumar',
+        'Middle Name': '',
+        'Age': 35,
+        'Gender': 'Male',
+        'Date of Birth': '1989-05-15',
+        'Phone': '9876543210',
+        'Alternate Phone': '',
+        'Email': 'rajesh.kumar@email.com',
+        'Caste': 'General',
+        'Religion': 'Hindu',
+        'Education': 'Graduate',
+        'Occupation': 'Engineer',
+        'Booth': '1',
+        'Ward': 'Ward 1',
+        'Pincode': '600001',
+        'Address Line 1': 'Plot 45, Sector 12',
+        'Address Line 2': 'Near City Center',
+        'Party Affiliation': 'Unknown',
+        'Sentiment': 'Neutral',
+        'Influence Level': 'Medium',
+        'Tags': 'youth, technology',
+        'Is Opinion Leader': 'No',
+        'Is Active': 'Yes',
+        'Notes': 'Interested in education policies'
+      },
+      {
+        'Voter ID': 'DEF9876543',
+        'First Name': 'Priya',
+        'Last Name': 'Sharma',
+        'Middle Name': '',
+        'Age': 28,
+        'Gender': 'Female',
+        'Date of Birth': '1996-08-20',
+        'Phone': '9876543211',
+        'Alternate Phone': '9876543212',
+        'Email': 'priya.sharma@email.com',
+        'Caste': 'OBC',
+        'Religion': 'Hindu',
+        'Education': 'Post Graduate',
+        'Occupation': 'Teacher',
+        'Booth': '2',
+        'Ward': 'Ward 2',
+        'Pincode': '600002',
+        'Address Line 1': 'House 23, Block C',
+        'Address Line 2': '',
+        'Party Affiliation': 'Unknown',
+        'Sentiment': 'Positive',
+        'Influence Level': 'High',
+        'Tags': 'education, women',
+        'Is Opinion Leader': 'Yes',
+        'Is Active': 'Yes',
+        'Notes': 'Active in community events'
+      }
+    ];
+
+    // Create Excel workbook
+    const worksheet = XLSX.utils.json_to_sheet(templateData);
+    const workbook = XLSX.utils.book_new();
+    XLSX.utils.book_append_sheet(workbook, worksheet, 'Voters Template');
+
+    // Add instructions sheet
+    const instructions = [
+      { 'Field': 'Voter ID', 'Required': 'Yes', 'Description': 'Unique voter ID card number' },
+      { 'Field': 'First Name', 'Required': 'Yes', 'Description': 'First name of the voter' },
+      { 'Field': 'Last Name', 'Required': 'No', 'Description': 'Last name of the voter' },
+      { 'Field': 'Age', 'Required': 'Yes', 'Description': 'Age between 18 and 120' },
+      { 'Field': 'Gender', 'Required': 'Yes', 'Description': 'Male, Female, or Other' },
+      { 'Field': 'Phone', 'Required': 'Yes', 'Description': '10 digit phone number' },
+      { 'Field': 'Booth', 'Required': 'Yes', 'Description': 'Polling booth number' },
+      { 'Field': 'Email', 'Required': 'No', 'Description': 'Valid email address' },
+      { 'Field': 'Sentiment', 'Required': 'No', 'Description': 'Positive, Negative, or Neutral' },
+      { 'Field': 'Influence Level', 'Required': 'No', 'Description': 'High, Medium, or Low' },
+      { 'Field': 'Tags', 'Required': 'No', 'Description': 'Comma-separated tags' },
+      { 'Field': 'Is Opinion Leader', 'Required': 'No', 'Description': 'Yes or No' },
+      { 'Field': 'Is Active', 'Required': 'No', 'Description': 'Yes or No (defaults to Yes)' }
+    ];
+    const instructionsSheet = XLSX.utils.json_to_sheet(instructions);
+    XLSX.utils.book_append_sheet(workbook, instructionsSheet, 'Instructions');
+
+    // Auto-size columns
+    worksheet['!cols'] = Array(Object.keys(templateData[0]).length).fill({ wch: 15 });
+    instructionsSheet['!cols'] = [{ wch: 20 }, { wch: 10 }, { wch: 50 }];
+
+    // Download template
+    XLSX.writeFile(workbook, 'voter-import-template.xlsx');
+
+    setSuccessMessage('Template downloaded successfully!');
+    setShowSuccess(true);
+    setTimeout(() => setShowSuccess(false), 3000);
   };
 
   return (
@@ -662,7 +1133,9 @@ export default function VoterDatabase() {
               <CheckCircle className="w-6 h-6 text-green-600" />
               <h3 className="text-lg font-semibold text-gray-900">Success</h3>
             </div>
-            <p className="text-gray-700 mb-6">Voter added successfully!</p>
+            <p className="text-gray-700 mb-6 whitespace-pre-line">
+              {successMessage || 'Voter added successfully!'}
+            </p>
             <div className="flex justify-end">
               <button
                 onClick={() => setShowSuccess(false)}
@@ -684,13 +1157,31 @@ export default function VoterDatabase() {
           <p className="text-gray-600">Comprehensive voter registration and engagement tracking system</p>
         </div>
         <div className="flex items-center space-x-3">
-          <button className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors">
+          {/* Hidden file input for import */}
+          <input
+            ref={fileInputRef}
+            type="file"
+            accept=".xlsx,.xls"
+            onChange={handleFileSelected}
+            className="hidden"
+          />
+
+          <button
+            onClick={handleImportData}
+            disabled={isImporting}
+            className="flex items-center space-x-2 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             <Upload className="w-4 h-4" />
-            <span>Import Data</span>
+            <span>{isImporting ? `Importing... ${importProgress}%` : 'Import Data'}</span>
           </button>
-          <button className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors">
+
+          <button
+            onClick={handleExportDatabase}
+            disabled={isExporting}
+            className="flex items-center space-x-2 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+          >
             <Download className="w-4 h-4" />
-            <span>Export Database</span>
+            <span>{isExporting ? `Exporting... ${exportProgress}%` : 'Export Database'}</span>
           </button>
         </div>
       </div>
@@ -950,7 +1441,7 @@ export default function VoterDatabase() {
                   </tr>
                 </thead>
                 <tbody>
-                  {filteredVoters.length === 0 ? (
+                  {paginatedVoters.length === 0 ? (
                     <tr>
                       <td colSpan={5} className="py-8 text-center text-gray-500">
                         {votersList.length === 0
@@ -959,7 +1450,7 @@ export default function VoterDatabase() {
                       </td>
                     </tr>
                   ) : (
-                    filteredVoters.map((voter) => (
+                    paginatedVoters.map((voter) => (
                       <tr key={voter.id} className="border-b border-gray-100 hover:bg-gray-50">
                         <td className="py-4 px-4">
                           <div>
@@ -1028,6 +1519,121 @@ export default function VoterDatabase() {
                 </tbody>
               </table>
             </div>
+
+            {/* Pagination */}
+            {filteredVoters.length > 0 && (
+              <div className="px-6 py-4 border-t border-gray-200 flex items-center justify-between">
+                {/* Left side - Items per page and info */}
+                <div className="flex items-center space-x-4">
+                  <div className="flex items-center space-x-2">
+                    <span className="text-sm text-gray-700">Show:</span>
+                    <select
+                      value={itemsPerPage}
+                      onChange={(e) => {
+                        setItemsPerPage(Number(e.target.value));
+                        setCurrentPage(1);
+                      }}
+                      className="border border-gray-300 rounded px-2 py-1 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
+                    >
+                      <option value={10}>10</option>
+                      <option value={25}>25</option>
+                      <option value={50}>50</option>
+                      <option value={100}>100</option>
+                    </select>
+                    <span className="text-sm text-gray-700">per page</span>
+                  </div>
+                  <span className="text-sm text-gray-700">
+                    Showing {startIndex + 1}-{Math.min(endIndex, filteredVoters.length)} of {filteredVoters.length} voters
+                  </span>
+                </div>
+
+                {/* Right side - Page navigation */}
+                <div className="flex items-center space-x-2">
+                  {/* Previous button */}
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.max(1, prev - 1))}
+                    disabled={currentPage === 1}
+                    className={`px-3 py-1 rounded border ${
+                      currentPage === 1
+                        ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    Previous
+                  </button>
+
+                  {/* Page numbers */}
+                  <div className="flex items-center space-x-1">
+                    {(() => {
+                      const pages = [];
+                      const maxVisible = 5;
+
+                      if (totalPages <= maxVisible) {
+                        // Show all pages
+                        for (let i = 1; i <= totalPages; i++) {
+                          pages.push(i);
+                        }
+                      } else {
+                        // Show first page, last page, current page and neighbors
+                        if (currentPage <= 3) {
+                          for (let i = 1; i <= 4; i++) pages.push(i);
+                          pages.push('...');
+                          pages.push(totalPages);
+                        } else if (currentPage >= totalPages - 2) {
+                          pages.push(1);
+                          pages.push('...');
+                          for (let i = totalPages - 3; i <= totalPages; i++) pages.push(i);
+                        } else {
+                          pages.push(1);
+                          pages.push('...');
+                          pages.push(currentPage - 1);
+                          pages.push(currentPage);
+                          pages.push(currentPage + 1);
+                          pages.push('...');
+                          pages.push(totalPages);
+                        }
+                      }
+
+                      return pages.map((page, idx) => {
+                        if (page === '...') {
+                          return (
+                            <span key={`ellipsis-${idx}`} className="px-2 text-gray-400">
+                              ...
+                            </span>
+                          );
+                        }
+                        return (
+                          <button
+                            key={page}
+                            onClick={() => setCurrentPage(page as number)}
+                            className={`px-3 py-1 rounded border ${
+                              currentPage === page
+                                ? 'bg-blue-600 text-white border-blue-600'
+                                : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                            }`}
+                          >
+                            {page}
+                          </button>
+                        );
+                      });
+                    })()}
+                  </div>
+
+                  {/* Next button */}
+                  <button
+                    onClick={() => setCurrentPage(prev => Math.min(totalPages, prev + 1))}
+                    disabled={currentPage === totalPages}
+                    className={`px-3 py-1 rounded border ${
+                      currentPage === totalPages
+                        ? 'border-gray-200 text-gray-400 cursor-not-allowed'
+                        : 'border-gray-300 text-gray-700 hover:bg-gray-50'
+                    }`}
+                  >
+                    Next
+                  </button>
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
@@ -1066,24 +1672,24 @@ export default function VoterDatabase() {
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Contact Method Success</h3>
               <div className="space-y-4">
-                {[
-                  { method: 'Door-to-door', success: 89, attempts: 12450 },
-                  { method: 'Phone Call', success: 67, attempts: 8920 },
-                  { method: 'WhatsApp', success: 78, attempts: 15680 },
-                  { method: 'Rally', success: 95, attempts: 3240 },
-                  { method: 'SMS', success: 45, attempts: 18920 }
-                ].map((method) => (
-                  <div key={method.method} className="flex items-center justify-between">
-                    <div>
-                      <div className="font-medium text-gray-900">{method.method}</div>
-                      <div className="text-xs text-gray-600">{method.attempts.toLocaleString()} attempts</div>
-                    </div>
-                    <div className="text-right">
-                      <div className="text-lg font-bold text-gray-900">{method.success}%</div>
-                      <div className="text-xs text-gray-600">Success Rate</div>
-                    </div>
+                {contactMethodStats.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    No contact method data available
                   </div>
-                ))}
+                ) : (
+                  contactMethodStats.map((method) => (
+                    <div key={method.method} className="flex items-center justify-between">
+                      <div>
+                        <div className="font-medium text-gray-900">{method.method}</div>
+                        <div className="text-xs text-gray-600">{method.attempts.toLocaleString()} attempts</div>
+                      </div>
+                      <div className="text-right">
+                        <div className="text-lg font-bold text-gray-900">{method.success}%</div>
+                        <div className="text-xs text-gray-600">Success Rate</div>
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
 
@@ -1091,27 +1697,29 @@ export default function VoterDatabase() {
             <div className="bg-white rounded-lg shadow-sm border border-gray-200 p-6">
               <h3 className="text-lg font-semibold text-gray-900 mb-4">Geographic Coverage</h3>
               <div className="space-y-3">
-                {[
-                  { area: 'Urban Areas', coverage: 92, voters: 45230 },
-                  { area: 'Semi-Urban', coverage: 78, voters: 38140 },
-                  { area: 'Rural Areas', coverage: 65, voters: 42050 }
-                ].map((area) => (
-                  <div key={area.area} className="p-4 bg-gray-50 rounded-lg">
-                    <div className="flex items-center justify-between mb-2">
-                      <span className="font-medium text-gray-900">{area.area}</span>
-                      <span className="text-sm font-medium text-gray-700">{area.coverage}%</span>
-                    </div>
-                    <div className="w-full h-2 bg-gray-200 rounded-full">
-                      <div 
-                        className="h-2 bg-blue-500 rounded-full"
-                        style={{ width: `${area.coverage}%` }}
-                      ></div>
-                    </div>
-                    <div className="text-xs text-gray-600 mt-1">
-                      {area.voters.toLocaleString()} voters
-                    </div>
+                {geographicCoverage.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    No geographic data available
                   </div>
-                ))}
+                ) : (
+                  geographicCoverage.map((area) => (
+                    <div key={area.area} className="p-4 bg-gray-50 rounded-lg">
+                      <div className="flex items-center justify-between mb-2">
+                        <span className="font-medium text-gray-900">{area.area}</span>
+                        <span className="text-sm font-medium text-gray-700">{area.coverage}%</span>
+                      </div>
+                      <div className="w-full h-2 bg-gray-200 rounded-full">
+                        <div
+                          className="h-2 bg-blue-500 rounded-full"
+                          style={{ width: `${area.coverage}%` }}
+                        ></div>
+                      </div>
+                      <div className="text-xs text-gray-600 mt-1">
+                        {area.voters.toLocaleString()} voters
+                      </div>
+                    </div>
+                  ))
+                )}
               </div>
             </div>
           </div>
@@ -1277,18 +1885,31 @@ export default function VoterDatabase() {
                   <div className="grid grid-cols-2 gap-4">
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Constituency *</label>
+                      <input
+                        type="text"
+                        placeholder="Search constituencies..."
+                        value={constituencySearch}
+                        onChange={(e) => setConstituencySearch(e.target.value)}
+                        className="w-full border border-gray-200 rounded-lg px-3 py-2 mb-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      />
                       <select
                         name="constituency"
                         value={formData.constituency}
-                        onChange={handleInputChange}
+                        onChange={handleConstituencySelect}
                         required
                         className="w-full border border-gray-200 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                        size={5}
                       >
                         <option value="">Select Constituency</option>
-                        <option value="Gurgaon Rural">Gurgaon Rural</option>
-                        <option value="Noida">Noida</option>
-                        <option value="Chandni Chowk">Chandni Chowk</option>
+                        {filteredConstituencies.map((constituency: any) => (
+                          <option key={constituency.code} value={constituency.name}>
+                            {constituency.name} ({constituency.district})
+                          </option>
+                        ))}
                       </select>
+                      <p className="text-xs text-gray-500 mt-1">
+                        Showing {filteredConstituencies.length} of {allConstituencies.length} constituencies
+                      </p>
                     </div>
                     <div>
                       <label className="block text-sm font-medium text-gray-700 mb-1">Booth *</label>

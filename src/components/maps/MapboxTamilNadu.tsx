@@ -147,7 +147,6 @@ export const MapboxTamilNadu: React.FC<MapboxTamilNaduProps> = React.memo(({
             <div style="font-size: 12px; color: #666;">
               <p style="margin: 4px 0;"><strong>District:</strong> ${properties?.DIST_NAME || 'N/A'}</p>
               <p style="margin: 4px 0;"><strong>AC No:</strong> ${properties?.AC_NO || 'N/A'}</p>
-              <p style="margin: 4px 0;"><strong>Parliament:</strong> ${properties?.PC_NAME || 'N/A'}</p>
             </div>
             <div style="margin-top: 8px; font-size: 11px; color: #999;">
               Click for more details
@@ -240,7 +239,6 @@ export const MapboxTamilNadu: React.FC<MapboxTamilNaduProps> = React.memo(({
           <div className="space-y-1 text-sm text-gray-600">
             <p><strong>District:</strong> {selectedConstituency.DIST_NAME}</p>
             <p><strong>AC Number:</strong> {selectedConstituency.AC_NO}</p>
-            <p><strong>Parliamentary:</strong> {selectedConstituency.PC_NAME}</p>
             <p><strong>State Code:</strong> {selectedConstituency.ST_CODE}</p>
           </div>
         </div>

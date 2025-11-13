@@ -340,6 +340,108 @@ class VotersService extends SupabaseService<Voter, VoterInsert, VoterUpdate> {
   async getFiltered(filters: VoterFilters): Promise<PaginatedResponse<Voter>> {
     return this.getAll({ filters });
   }
+
+  /**
+   * Bulk create voters with duplicate detection
+   * Skips voters with duplicate voter_id
+   */
+  async bulkCreate(
+    voters: VoterInsert[]
+  ): Promise<{
+    success: number;
+    duplicates: number;
+    errors: number;
+    insertedVoters: Voter[];
+  }> {
+    let successCount = 0;
+    let duplicateCount = 0;
+    let errorCount = 0;
+    const insertedVoters: Voter[] = [];
+
+    // Process in batches of 1000 to avoid overwhelming the database
+    const batchSize = 1000;
+
+    for (let i = 0; i < voters.length; i += batchSize) {
+      const batch = voters.slice(i, i + batchSize);
+
+      // Check for existing voter_ids in this batch
+      const voterIds = batch.map((v) => v.voter_id);
+      const { data: existingVoters, error: checkError } = await supabase
+        .from('voters')
+        .select('voter_id')
+        .in('voter_id', voterIds);
+
+      if (checkError) {
+        console.error('Error checking for duplicates:', checkError);
+        errorCount += batch.length;
+        continue;
+      }
+
+      const existingVoterIds = new Set(
+        existingVoters?.map((v) => v.voter_id) || []
+      );
+
+      // Filter out duplicates
+      const newVoters = batch.filter((v) => !existingVoterIds.has(v.voter_id));
+      duplicateCount += batch.length - newVoters.length;
+
+      // Insert new voters
+      if (newVoters.length > 0) {
+        const { data, error } = await supabase
+          .from('voters')
+          .insert(newVoters)
+          .select();
+
+        if (error) {
+          console.error('Error inserting batch:', error);
+          errorCount += newVoters.length;
+        } else {
+          successCount += data?.length || 0;
+          insertedVoters.push(...(data || []));
+        }
+      }
+    }
+
+    return {
+      success: successCount,
+      duplicates: duplicateCount,
+      errors: errorCount,
+      insertedVoters,
+    };
+  }
+
+  /**
+   * Get all voters for export (paginated to handle large datasets)
+   */
+  async getAllForExport(): Promise<Voter[]> {
+    const allVoters: Voter[] = [];
+    const pageSize = 1000;
+    let page = 0;
+    let hasMore = true;
+
+    while (hasMore) {
+      const { data, error } = await supabase
+        .from('voters')
+        .select('*')
+        .order('created_at', { ascending: false })
+        .range(page * pageSize, (page + 1) * pageSize - 1);
+
+      if (error) {
+        console.error('Error fetching voters:', error);
+        throw error;
+      }
+
+      if (data && data.length > 0) {
+        allVoters.push(...data);
+        page++;
+        hasMore = data.length === pageSize;
+      } else {
+        hasMore = false;
+      }
+    }
+
+    return allVoters;
+  }
 }
 
 // Export singleton instance

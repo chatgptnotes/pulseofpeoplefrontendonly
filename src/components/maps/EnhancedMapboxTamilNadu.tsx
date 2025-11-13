@@ -772,7 +772,6 @@ export const EnhancedMapboxTamilNadu: React.FC<EnhancedMapboxTamilNaduProps> = R
           <div className="space-y-2 text-sm text-gray-600">
             <p><strong>District:</strong> {selectedConstituency.DIST_NAME}</p>
             <p><strong>AC Number:</strong> {selectedConstituency.AC_NO}</p>
-            <p><strong>Parliamentary:</strong> {selectedConstituency.PC_NAME}</p>
           </div>
         </div>
       )}

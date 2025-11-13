@@ -38,6 +38,8 @@ import {
   Bookmark
 } from 'lucide-react';
 import { MobileCard, ResponsiveGrid, MobileButton, MobileTabs } from '../components/MobileResponsive';
+import { socialMediaService, type SocialMediaPost as DBSocialMediaPost } from '../services/supabase/socialMedia.service';
+import { supabase } from '../lib/supabase';
 
 interface SocialPlatform {
   id: string;
@@ -344,6 +346,100 @@ export default function SocialMediaChannels() {
     realTimeAlerts: 5,
     crossPlatformReach: 68500000
   });
+
+  // State for real posts from Supabase
+  const [socialPosts, setSocialPosts] = useState<SocialPost[]>([]);
+  const [loadingPosts, setLoadingPosts] = useState(true);
+
+  // Fetch real posts from Supabase
+  useEffect(() => {
+    fetchSocialPosts();
+  }, []);
+
+  const fetchSocialPosts = async () => {
+    try {
+      setLoadingPosts(true);
+      console.log('[SocialMediaChannels] Starting to fetch posts from Supabase...');
+
+      // Check if user is authenticated (required by RLS policy)
+      const { data: { session }, error: sessionError } = await supabase.auth.getSession();
+
+      if (sessionError) {
+        console.error('[SocialMediaChannels] Error getting session:', sessionError);
+      }
+
+      if (!session) {
+        console.warn('[SocialMediaChannels] User not authenticated. RLS policy requires authentication to view posts.');
+        console.warn('[SocialMediaChannels] Using mock data as fallback.');
+        setSocialPosts(mockSocialPosts);
+        setLoadingPosts(false);
+        return;
+      }
+
+      console.log('[SocialMediaChannels] User authenticated. User ID:', session.user.id);
+      console.log('[SocialMediaChannels] Fetching posts...');
+
+      const dbPosts = await socialMediaService.fetchPosts(undefined, 50);
+      console.log('[SocialMediaChannels] Fetched posts count:', dbPosts.length);
+
+      if (dbPosts.length === 0) {
+        console.warn('[SocialMediaChannels] No posts found in database. Make sure to run insert_social_media_posts.sql');
+        setSocialPosts([]);
+        setLoadingPosts(false);
+        return;
+      }
+
+      console.log('[SocialMediaChannels] Transforming', dbPosts.length, 'posts to component format...');
+
+      // Transform database posts to component format
+      const transformedPosts: SocialPost[] = dbPosts.map((dbPost) => ({
+        id: dbPost.id,
+        platform: dbPost.platform.charAt(0).toUpperCase() + dbPost.platform.slice(1),
+        author: dbPost.platform === 'facebook' ? 'Tamil Nadu State News' :
+                dbPost.platform === 'instagram' ? 'YouthTamilNaduNow' :
+                'TN Updates',
+        authorFollowers: 450000,
+        content: dbPost.post_content,
+        timestamp: new Date(dbPost.posted_at),
+        engagement: {
+          likes: dbPost.likes,
+          shares: dbPost.shares,
+          comments: dbPost.comments_count,
+          views: dbPost.reach
+        },
+        sentiment: socialMediaService.getSentimentLabel(dbPost.sentiment_score),
+        sentimentScore: dbPost.sentiment_score,
+        topics: [],
+        mentions: dbPost.mentions || [],
+        hashtags: dbPost.hashtags || [],
+        mediaType: 'text',
+        isVerified: true,
+        location: 'Tamil Nadu',
+        language: 'en',
+        influence: socialMediaService.calculateInfluenceScore(dbPost),
+        viralPotential: socialMediaService.calculateViralScore(dbPost),
+        category: 'political'
+      }));
+
+      console.log('[SocialMediaChannels] Successfully transformed', transformedPosts.length, 'posts');
+      setSocialPosts(transformedPosts);
+
+    } catch (error) {
+      console.error('[SocialMediaChannels] ERROR fetching social posts:', error);
+
+      if (error instanceof Error) {
+        console.error('[SocialMediaChannels] Error message:', error.message);
+        console.error('[SocialMediaChannels] Error stack:', error.stack);
+      }
+
+      // Fall back to mock data if fetch fails
+      console.warn('[SocialMediaChannels] Falling back to mock data due to error');
+      setSocialPosts(mockSocialPosts);
+    } finally {
+      setLoadingPosts(false);
+      console.log('[SocialMediaChannels] Fetch complete. Loading state:', false);
+    }
+  };
 
   useEffect(() => {
     // Update analytics based on platform data
@@ -752,7 +848,16 @@ export default function SocialMediaChannels() {
 
             {/* Posts List */}
             <div className="space-y-4">
-              {mockSocialPosts.map(post => {
+              {loadingPosts ? (
+                <div className="text-center py-8 text-gray-500">
+                  Loading posts...
+                </div>
+              ) : socialPosts.length === 0 ? (
+                <div className="text-center py-8 text-gray-500">
+                  No posts available. Run the insert_social_media_posts.sql file to add sample data.
+                </div>
+              ) : (
+                socialPosts.map(post => {
                 const MediaIcon = getMediaIcon(post.mediaType);
                 const platformData = socialPlatforms.find(p => p.name === post.platform);
                 const PostPlatformIcon = platformData?.icon || MessageCircle;
@@ -871,7 +976,8 @@ export default function SocialMediaChannels() {
                     </div>
                   </MobileCard>
                 );
-              })}
+              })
+              )}
             </div>
           </div>
         )}

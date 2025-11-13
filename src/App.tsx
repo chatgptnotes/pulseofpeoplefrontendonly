@@ -9,7 +9,7 @@ import ErrorBoundary from './components/ErrorBoundary'
 import FullScreenLoader from './components/FullScreenLoader'
 import Layout from './components/Layout'
 import LandingLayout from './components/LandingLayout'
-import TenantLandingPage from './pages/TenantLandingPage'
+import TVKLandingPage from './pages/TVKLandingPage'
 import Dashboard from './pages/Dashboard'
 import Analytics from './pages/Analytics'
 import Reports from './pages/Reports'
@@ -105,10 +105,10 @@ function AppRoutes() {
 
   return (
     <Routes>
-              {/* Landing Page with minimal layout - Now tenant-aware */}
+              {/* TVK Landing Page */}
               <Route path="/" element={
                 <LandingLayout>
-                  <TenantLandingPage />
+                  <TVKLandingPage />
                 </LandingLayout>
               } />
 

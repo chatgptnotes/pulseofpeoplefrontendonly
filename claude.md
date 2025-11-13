@@ -16,7 +16,7 @@ Build and ship the following, end-to-end, without asking questions:
 - APIs: ElevenLabs, OpenAI, AI4Bharat
 
 **[REPO/ENV]**:
-- Repo: `/Users/murali/1backup/pulseofpeoplefrontendonly/pulseofprojectfrontendonly`
+- Repo: `/Users/murali/1backup/pulseofpeoplefrontendonly/pulseofpeoplefrontendonly`
 - Package Manager: npm
 - OS: macOS
 

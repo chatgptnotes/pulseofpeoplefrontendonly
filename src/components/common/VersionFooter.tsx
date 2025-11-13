@@ -28,8 +28,8 @@ export default function VersionFooter({
     month: 'short',
     day: 'numeric',
   });
-  const repoName = 'pulseofprojectfrontendonly';
-  const repoUrl = `https://github.com/yourusername/${repoName}`; // Update with actual repo URL
+  const repoName = 'pulseofpeoplefrontendonly';
+  const repoUrl = `https://github.com/chatgptnotes/${repoName}`;
 
   return (
     <Box
@@ -110,6 +110,6 @@ export function useVersionInfo() {
   return {
     version: '1.0',
     buildDate: '2025-11-13',
-    repoName: 'pulseofprojectfrontendonly',
+    repoName: 'pulseofpeoplefrontendonly',
   };
 }

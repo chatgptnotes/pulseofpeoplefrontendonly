@@ -413,4 +413,4 @@ GET    /api/export/personas/:id          // Export persona data
 
 **Version**: 1.0
 **Last Updated**: 2025-11-13
-**Repository**: pulseofprojectfrontendonly
+**Repository**: pulseofpeoplefrontendonly

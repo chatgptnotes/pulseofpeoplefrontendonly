@@ -137,6 +137,7 @@ async function createUser(userData) {
             .from('users')
             .upsert({
               id: existingUser.id,
+              auth_user_id: existingUser.id,
               email: userData.email,
               full_name: userData.full_name,
               role: userData.role,
@@ -167,6 +168,7 @@ async function createUser(userData) {
       .from('users')
       .insert({
         id: authData.user.id,
+        auth_user_id: authData.user.id,
         email: userData.email,
         full_name: userData.full_name,
         role: userData.role,

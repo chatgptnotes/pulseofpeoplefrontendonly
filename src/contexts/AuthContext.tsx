@@ -104,7 +104,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Fetch user details from database with extended timeout (30 seconds)
       console.log('[AuthContext] 🔄 Step 2/2: Fetching user data from database...');
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('User data fetch timeout after 5 seconds')), 5000);
+        setTimeout(() => reject(new Error('User data fetch timeout after 30 seconds')), 30000);
       });
 
       const userDataPromise = supabase
@@ -132,6 +132,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
             permissions: ['*'], // Grant basic permissions
             avatar: session.user.user_metadata?.avatar_url,
             is_super_admin: false,
+            organization_id: '00000000-0000-0000-0000-000000000001', // Dev org ID
             status: 'active',
           };
 
@@ -174,6 +175,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           permissions: ['*'], // Grant basic permissions
           avatar: session.user.user_metadata?.avatar_url,
           is_super_admin: false,
+          organization_id: '00000000-0000-0000-0000-000000000001', // Dev org ID
           status: 'active',
         };
 
@@ -194,7 +196,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Fetch user details from database with extended timeout (30 seconds)
       console.log('[AuthContext] 🔄 Fetching user data from database for:', session.user.email);
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('User data fetch timeout after 5 seconds')), 5000);
+        setTimeout(() => reject(new Error('User data fetch timeout after 30 seconds')), 30000);
       });
 
       const userDataPromise = supabase
@@ -222,6 +224,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
             permissions: ['*'], // Grant basic permissions
             avatar: session.user.user_metadata?.avatar_url,
             is_super_admin: false,
+            organization_id: '00000000-0000-0000-0000-000000000001', // Dev org ID
             status: 'active',
           };
 
@@ -266,6 +269,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           permissions: ['*'], // Grant basic permissions
           avatar: session.user.user_metadata?.avatar_url,
           is_super_admin: false,
+          organization_id: '00000000-0000-0000-0000-000000000001', // Dev org ID
           status: 'active',
         };
 
@@ -313,7 +317,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
       // Fetch user details from database with timeout
       console.log('[AuthContext] 🔄 Fetching user data from database...');
       const timeoutPromise = new Promise((_, reject) => {
-        setTimeout(() => reject(new Error('User data fetch timeout after 5 seconds')), 5000);
+        setTimeout(() => reject(new Error('User data fetch timeout after 30 seconds')), 30000);
       });
 
       const userDataPromise = supabase
@@ -380,6 +384,7 @@ export function AuthProvider({ children }: AuthProviderProps) {
           permissions: ['*'], // Grant basic permissions
           avatar: authData.user.user_metadata?.avatar_url,
           is_super_admin: false,
+          organization_id: '00000000-0000-0000-0000-000000000001', // Dev org ID
           status: 'active',
         };
 

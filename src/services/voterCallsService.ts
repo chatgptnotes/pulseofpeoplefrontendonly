@@ -407,8 +407,10 @@ class VoterCallsService {
       const successfulCalls = calls.filter(c => c.status === 'completed');
       const failedCalls = calls.filter(c => ['failed', 'no_answer', 'busy', 'cancelled'].includes(c.status));
 
-      const totalDuration = calls.reduce((sum, c) => sum + (c.duration_seconds || 0), 0);
-      const avgDuration = calls.length > 0 ? totalDuration / calls.length : 0;
+      // Calculate average duration only from calls with valid duration
+      const callsWithDuration = calls.filter(c => c.duration_seconds && c.duration_seconds > 0);
+      const totalDuration = callsWithDuration.reduce((sum, c) => sum + c.duration_seconds!, 0);
+      const avgDuration = callsWithDuration.length > 0 ? totalDuration / callsWithDuration.length : 0;
 
       // Group by date
       const byDate: Record<string, { calls: number; successful: number; failed: number }> = {};

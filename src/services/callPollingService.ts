@@ -7,6 +7,7 @@
 import { elevenLabsService } from './elevenLabsService';
 import { voterCallsService } from './voterCallsService';
 import { voterSentimentService } from './voterSentimentService';
+import { mapElevenLabsStatusToDb } from '../utils/callStatusMapper';
 
 class CallPollingService {
   private pollingInterval: NodeJS.Timeout | null = null;
@@ -132,7 +133,7 @@ class CallPollingService {
         console.log('[CallPolling] === END DEBUG ===');
       }
 
-      // Filter for completed calls since last poll
+      // Filter for ALL finished calls (completed, failed, no_answer, busy, cancelled)
       const completedCalls = conversations.filter((conv: any) => {
         const callId = conv.conversation_id || conv.id || conv.call_id;
 
@@ -144,21 +145,25 @@ class CallPollingService {
 
         const status = conv.status?.toLowerCase() || '';
 
-        // FIX: Check call_successful as STRING "success", not boolean true
-        // ElevenLabs returns: call_successful: "success" or call_successful: "failed"
-        const isSuccessful = conv.call_successful === 'success';
+        // Accept calls with explicit call_successful status (both success and failed)
+        const hasCallSuccessful = conv.call_successful === 'success' || conv.call_successful === 'failed';
 
-        // Check status string for completion indicators
-        const hasCompletionStatus =
+        // Check status string for completion/termination indicators
+        const hasFinishedStatus =
           status === 'completed' ||
           status === 'successful' ||
           status === 'ended' ||
           status === 'finished' ||
-          status === 'done';
+          status === 'done' ||
+          status === 'failed' ||
+          status === 'no-answer' ||
+          status === 'no_answer' ||
+          status === 'busy' ||
+          status === 'cancelled';
 
-        // Filter by successful completion status (removed end_time requirement)
-        if (!isSuccessful && !hasCompletionStatus) {
-          console.log(`[CallPolling] Skipping ${callId?.substring(0, 20)}: status="${conv.status}", call_successful=${conv.call_successful}`);
+        // Accept any call that has finished (either successfully or with failure)
+        if (!hasCallSuccessful && !hasFinishedStatus) {
+          console.log(`[CallPolling] Skipping ${callId?.substring(0, 20)}: status="${conv.status}", call_successful=${conv.call_successful} (not finished)`);
           return false;
         }
 
@@ -233,18 +238,24 @@ class CallPollingService {
 
       // Fetch transcript from ElevenLabs (in Tamil) with retry logic
       console.log(`[CallPolling] Fetching transcript for call: ${callId}`);
-      const transcriptData = await this.retryWithBackoff(
-        () => elevenLabsService.getTranscript(callId),
-        3, // max 3 retries
-        2000 // start with 2s delay
-      );
-
-      if (!transcriptData.transcript) {
-        console.warn(`[CallPolling] No transcript available for call: ${callId}`);
-        return;
+      let transcriptData;
+      try {
+        transcriptData = await this.retryWithBackoff(
+          () => elevenLabsService.getTranscript(callId),
+          3, // max 3 retries
+          2000 // start with 2s delay
+        );
+      } catch (error) {
+        console.warn(`[CallPolling] Failed to fetch transcript for call: ${callId}`, error);
+        transcriptData = { transcript: '', duration_seconds: 0 };
       }
 
-      console.log(`[CallPolling] Transcript fetched successfully (${transcriptData.transcript.length} chars)`);
+      const hasTranscript = !!transcriptData.transcript;
+      if (hasTranscript) {
+        console.log(`[CallPolling] Transcript fetched successfully (${transcriptData.transcript.length} chars)`);
+      } else {
+        console.log(`[CallPolling] No transcript available for call: ${callId} - will save as failed/no_answer`);
+      }
 
       // Determine organization ID from call metadata or conversation initiation data
       const metadata = call.conversation_initiation_client_data || call.metadata || {};
@@ -259,13 +270,27 @@ class CallPollingService {
       const startTime = call.start_time || call.started_at || call.start_timestamp;
       const endTime = call.end_time || call.ended_at || call.completed_at || call.end_timestamp;
 
+      // Map ElevenLabs call status to database status
+      const callStatusData = {
+        status: call.status,
+        call_successful: call.call_successful,
+        error_message: call.error_message,
+        metadata: call.metadata || call.conversation_initiation_client_data,
+      };
+      const { dbStatus, errorMessage } = mapElevenLabsStatusToDb(
+        callStatusData,
+        !!transcriptData.transcript // If we have a transcript, call was answered
+      );
+
+      console.log(`[CallPolling] Mapped status: ${dbStatus}${errorMessage ? ` (${errorMessage})` : ''}`);
+
       // Save to Supabase using service-role client (bypasses RLS)
       const savedCall = await voterCallsService.createCallFromPolling({
         organization_id: organizationId,
         call_id: callId,
         phone_number: phoneNumber,
         voter_name: metadata.voter_name || undefined,
-        status: 'completed',
+        status: dbStatus, // Use mapped status instead of hard-coded 'completed'
         duration_seconds: transcriptData.duration_seconds || call.duration_seconds || call.duration || 0,
         call_started_at: startTime ? new Date(startTime) : new Date(),
         call_ended_at: endTime ? new Date(endTime) : new Date(),
@@ -273,6 +298,7 @@ class CallPollingService {
         transcript_fetched_at: new Date(),
         elevenlabs_agent_id: call.agent_id || undefined,
         elevenlabs_metadata: call,
+        error_message: errorMessage, // Include error message if present
         created_by: metadata.created_by || metadata.user_id || undefined,
       });
 
@@ -283,23 +309,28 @@ class CallPollingService {
 
       console.log(`[CallPolling] Call saved to database: ${savedCall.id}`);
 
-      // Analyze sentiment using AI4Bharat (handles Tamil text)
-      console.log(`[CallPolling] Analyzing sentiment with AI4Bharat for call: ${callId}`);
-      const analysis = await voterSentimentService.analyzeTranscriptWithAI(
-        transcriptData.transcript,
-        callId
-      );
+      // Only analyze sentiment if we have a transcript
+      if (hasTranscript && transcriptData.transcript) {
+        // Analyze sentiment using AI4Bharat (handles Tamil text)
+        console.log(`[CallPolling] Analyzing sentiment with AI4Bharat for call: ${callId}`);
+        const analysis = await voterSentimentService.analyzeTranscriptWithAI(
+          transcriptData.transcript,
+          callId
+        );
 
-      // Save sentiment analysis using service-role client (bypasses RLS)
-      const savedAnalysis = await voterSentimentService.saveSentimentAnalysisFromPolling(
-        savedCall.id,
-        organizationId,
-        analysis,
-        'ai4bharat-indicbert'
-      );
+        // Save sentiment analysis using service-role client (bypasses RLS)
+        const savedAnalysis = await voterSentimentService.saveSentimentAnalysisFromPolling(
+          savedCall.id,
+          organizationId,
+          analysis,
+          'ai4bharat-indicbert'
+        );
 
-      if (savedAnalysis) {
-        console.log(`[CallPolling] Sentiment analysis saved for call: ${callId}`);
+        if (savedAnalysis) {
+          console.log(`[CallPolling] Sentiment analysis saved for call: ${callId}`);
+        }
+      } else {
+        console.log(`[CallPolling] Skipping sentiment analysis for call ${callId} (no transcript)`);
       }
 
       // Mark call as processed to prevent duplicate processing

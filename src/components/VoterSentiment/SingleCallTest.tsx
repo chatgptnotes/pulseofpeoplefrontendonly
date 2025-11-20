@@ -32,6 +32,7 @@ import { elevenLabsService } from '../../services/elevenLabsService';
 import { voterSentimentService } from '../../services/voterSentimentService';
 import { voterCallsService } from '../../services/voterCallsService';
 import { callPollingService } from '../../services/callPollingService';
+import { mapElevenLabsStatusToDb } from '../../utils/callStatusMapper';
 import type { VoterCall, CallSentimentAnalysis } from '../../types';
 import { useToast } from '../../contexts/ToastContext';
 
@@ -100,20 +101,47 @@ const SingleCallTest: React.FC<SingleCallTestProps> = ({
           duration_seconds: status.duration_seconds || prev.duration_seconds,
         } : null);
 
-        // Check if call is completed (handle all possible completion statuses from ElevenLabs)
+        // Check if call has finished (completed or failed)
         const completionStatuses = ['completed', 'ended', 'finished', 'done'];
-        const failureStatuses = ['failed', 'error', 'canceled', 'cancelled'];
+        const failureStatuses = ['failed', 'error', 'canceled', 'cancelled', 'no-answer', 'no_answer', 'busy'];
+        const statusLower = status.status?.toLowerCase() || '';
 
-        if (completionStatuses.includes(status.status?.toLowerCase())) {
+        const isFinished = completionStatuses.includes(statusLower) ||
+                          failureStatuses.includes(statusLower) ||
+                          status.call_successful === 'success' ||
+                          status.call_successful === 'failed';
+
+        if (isFinished) {
           setIsPolling(false);
           setIsCallStuck(false);
-          setCallStatus('fetching_transcript');
-          await fetchTranscriptAndAnalyze(currentCall.call_id);
-        } else if (failureStatuses.includes(status.status?.toLowerCase())) {
-          setIsPolling(false);
-          setIsCallStuck(false);
-          setCallStatus('failed');
-          setError(status.error_message || `Call ${status.status}`);
+
+          // Determine final call status IMMEDIATELY using status mapper
+          const { dbStatus, errorMessage } = mapElevenLabsStatusToDb(status, false);
+
+          console.log('[SingleCallTest] Call finished - Status:', {
+            elevenlabs_status: status.status,
+            call_successful: status.call_successful,
+            twilio_status: status.metadata?.twilio_status,
+            mapped_status: dbStatus
+          });
+
+          // Set final status immediately so user sees it right away
+          setFinalCallStatus(dbStatus);
+
+          // Only fetch transcript and analyze if call was actually answered (completed)
+          if (dbStatus === 'completed') {
+            setCallStatus('fetching_transcript');
+            await fetchTranscriptAndAnalyze(currentCall.call_id, status);
+          } else {
+            // Call was not answered (no_answer, busy, cancelled, failed)
+            setCallStatus('failed');
+            setError(errorMessage || `Call ${dbStatus.replace('_', ' ')}`);
+
+            // Save the failed call to database
+            await saveFailedCall(currentCall.call_id, status, dbStatus, errorMessage);
+
+            showToast(`Call ${dbStatus.replace('_', ' ')}`, 'warning');
+          }
         }
       } catch (err) {
         console.error('Error polling call status:', err);
@@ -134,7 +162,7 @@ const SingleCallTest: React.FC<SingleCallTestProps> = ({
     };
   }, [isPolling, currentCall]);
 
-  // Detect stuck calls (calls that stay in "initiated" status for >30 seconds)
+  // Detect stuck calls (calls that stay in "initiated" status for >40 seconds)
   useEffect(() => {
     let stuckTimer: NodeJS.Timeout | null = null;
 
@@ -142,23 +170,33 @@ const SingleCallTest: React.FC<SingleCallTestProps> = ({
       console.log('[SingleCallTest] Call in "initiated" status, starting stuck detection timer...');
 
       stuckTimer = setTimeout(async () => {
-        // Check status again after 30 seconds
+        // Check status again after 40 seconds
         try {
           const status = await elevenLabsService.getCallStatus(currentCall.call_id);
 
           if (status.status === 'initiated') {
-            console.warn('[SingleCallTest] Call stuck in "initiated" status after 30 seconds!');
+            console.warn('[SingleCallTest] Call stuck in "initiated" status after 40 seconds!');
             setIsCallStuck(true);
 
+            // Mark call as failed after timeout
+            setIsPolling(false);
+            setFinalCallStatus('failed');
+            setCallStatus('failed');
+            setError('Call timed out - likely Twilio trial account restriction');
+
+            // Save as failed call
+            const { dbStatus, errorMessage } = mapElevenLabsStatusToDb(status, false);
+            await saveFailedCall(currentCall.call_id, status, 'failed', 'Call timed out in initiated status');
+
             showToast(
-              'Call appears stuck at Twilio level - likely trial account restriction',
-              'warning'
+              'Call timed out - likely Twilio trial account restriction',
+              'error'
             );
           }
         } catch (err) {
           console.error('[SingleCallTest] Error checking stuck call status:', err);
         }
-      }, 30000); // 30 seconds
+      }, 40000); // 40 seconds
     }
 
     return () => {
@@ -168,77 +206,71 @@ const SingleCallTest: React.FC<SingleCallTestProps> = ({
     };
   }, [isPolling, currentCall?.status, currentCall?.call_id]);
 
-  const fetchTranscriptAndAnalyze = async (callId: string) => {
+  // Save failed/no_answer/busy/cancelled calls to database
+  const saveFailedCall = async (
+    callId: string,
+    callStatusData: any,
+    dbStatus: 'no_answer' | 'busy' | 'failed' | 'cancelled',
+    errorMessage?: string
+  ) => {
     try {
-      // Fetch transcript from ElevenLabs
-      setCallStatus('fetching_transcript');
-      const transcriptData = await elevenLabsService.getTranscript(callId);
-      setTranscript(transcriptData.transcript);
+      console.log('[SingleCallTest] Saving failed call to database:', { callId, dbStatus, errorMessage });
 
-      // Get final call status to determine if answered/not answered
-      const callStatusData = await elevenLabsService.getCallStatus(callId);
-
-      // Map ElevenLabs status to database status
-      let dbStatus: 'completed' | 'no_answer' | 'busy' | 'failed' | 'cancelled' = 'completed';
-      let errorMessage: string | undefined;
-
-      const statusLower = callStatusData.status?.toLowerCase() || '';
-      const twilioStatus = callStatusData.metadata?.twilio_status?.toLowerCase() || '';
-
-      // KEY INSIGHT: If we successfully fetched a transcript, the call was completed!
-      // Check known completion statuses first
-      const completionStatuses = ['done', 'completed', 'ended', 'finished', 'successful'];
-      if (completionStatuses.some(s => statusLower.includes(s)) ||
-          callStatusData.call_successful === 'success' ||
-          callStatusData.call_successful === true) {
-        dbStatus = 'completed'; // Call was answered and completed
-      } else if (callStatusData.call_successful === 'failed' ||
-                 callStatusData.call_successful === false ||
-                 statusLower.includes('fail')) {
-        // Call explicitly failed - determine why
-        if (statusLower.includes('no-answer') || statusLower.includes('no_answer') ||
-            twilioStatus.includes('no-answer') || twilioStatus === 'no_answer') {
-          dbStatus = 'no_answer';
-        } else if (statusLower.includes('busy') || twilioStatus.includes('busy')) {
-          dbStatus = 'busy';
-        } else if (statusLower.includes('cancel')) {
-          dbStatus = 'cancelled';
-        } else {
-          dbStatus = 'failed';
-        }
-        errorMessage = callStatusData.error_message || `Call ${dbStatus.replace('_', ' ')}`;
-      } else {
-        // call_successful is undefined or unknown - but we have a transcript, so it completed
-        dbStatus = 'completed';
-      }
-
-      console.log('[SingleCallTest] Final call status:', {
-        call_id: callId,
-        elevenlabs_status: callStatusData.status,
-        call_successful: callStatusData.call_successful,
-        twilio_status: twilioStatus,
-        mapped_db_status: dbStatus
-      });
-
-      // Set the final call status for UI display
-      setFinalCallStatus(dbStatus);
-
-      // Now save the complete call data to Supabase (first time save)
-      // Using createCallFromPolling to bypass RLS with service-role client
       const savedCall = await voterCallsService.createCallFromPolling({
         organization_id: organizationId,
         call_id: callId,
         phone_number: currentCall!.phone_number,
         voter_name: currentCall!.voter_name,
         status: dbStatus,
-        duration_seconds: transcriptData.duration_seconds,
+        duration_seconds: callStatusData.duration_seconds || 0,
+        call_started_at: currentCall!.call_started_at,
+        call_ended_at: new Date(),
+        transcript: null, // No transcript for failed calls
+        transcript_fetched_at: null,
+        elevenlabs_agent_id: import.meta.env.VITE_ELEVENLABS_AGENT_ID,
+        elevenlabs_metadata: callStatusData,
+        error_message: errorMessage,
+        created_by: userId,
+      });
+
+      if (savedCall) {
+        console.log('[SingleCallTest] Failed call saved successfully:', savedCall.id);
+      }
+    } catch (err) {
+      console.error('[SingleCallTest] Error saving failed call:', err);
+      // Don't throw - just log the error
+    }
+  };
+
+  const fetchTranscriptAndAnalyze = async (callId: string, callStatusData: any) => {
+    try {
+      // Fetch transcript from ElevenLabs
+      setCallStatus('fetching_transcript');
+      const transcriptData = await elevenLabsService.getTranscript(callId);
+
+      if (!transcriptData.transcript) {
+        throw new Error('No transcript available');
+      }
+
+      setTranscript(transcriptData.transcript);
+
+      console.log('[SingleCallTest] Transcript fetched, saving completed call to database');
+
+      // Save the completed call data to Supabase
+      // Using createCallFromPolling to bypass RLS with service-role client
+      const savedCall = await voterCallsService.createCallFromPolling({
+        organization_id: organizationId,
+        call_id: callId,
+        phone_number: currentCall!.phone_number,
+        voter_name: currentCall!.voter_name,
+        status: 'completed', // We know it's completed if we got here
+        duration_seconds: transcriptData.duration_seconds || callStatusData.duration_seconds || 0,
         call_started_at: currentCall!.call_started_at,
         call_ended_at: new Date(),
         transcript: transcriptData.transcript,
         transcript_fetched_at: new Date(),
         elevenlabs_agent_id: import.meta.env.VITE_ELEVENLABS_AGENT_ID,
-        elevenlabs_metadata: callStatusData, // Save full status metadata
-        error_message: errorMessage,
+        elevenlabs_metadata: callStatusData,
         created_by: userId,
       });
 
@@ -398,7 +430,9 @@ const SingleCallTest: React.FC<SingleCallTestProps> = ({
     setIsManualRefreshing(true);
     try {
       showToast('Fetching latest transcript...', 'info');
-      await fetchTranscriptAndAnalyze(currentCall.call_id);
+      // Fetch latest call status first
+      const callStatusData = await elevenLabsService.getCallStatus(currentCall.call_id);
+      await fetchTranscriptAndAnalyze(currentCall.call_id, callStatusData);
       showToast('Transcript refreshed successfully!', 'success');
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to refresh transcript';

@@ -48,6 +48,7 @@ import {
   PieChart
 } from 'lucide-react';
 import { MobileCard, ResponsiveGrid, MobileButton, MobileTabs } from '../components/MobileResponsive';
+import { openaiService } from '../services/openaiService';
 
 interface Conversation {
   id: string;
@@ -355,6 +356,7 @@ export default function ConversationBot() {
   const [currentMessage, setCurrentMessage] = useState('');
   const [showFilters, setShowFilters] = useState(false);
   const [messages, setMessages] = useState<Message[]>(initialMessages);
+  const [isBotTyping, setIsBotTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
 
   const [analytics, setAnalytics] = useState({
@@ -376,42 +378,83 @@ export default function ConversationBot() {
     scrollToBottom();
   }, [messages]);
 
-  // Handle sending messages
-  const handleSendMessage = () => {
-    if (!currentMessage.trim()) return;
+  // Handle sending messages with OpenAI integration
+  const handleSendMessage = async () => {
+    if (!currentMessage.trim() || isBotTyping) return;
+
+    const userMessageContent = currentMessage.trim();
 
     // Add user message
     const newUserMessage: Message = {
       id: Date.now().toString(),
       conversationId: '1',
       sender: 'user',
-      content: currentMessage,
+      content: userMessageContent,
       timestamp: new Date(),
       type: 'text',
       sentiment: 'neutral',
-      language: selectedLanguage === 'all' ? 'Tamil' : selectedLanguage,
+      language: selectedLanguage === 'all' ? 'English' : selectedLanguage,
       processed: true
     };
 
     setMessages(prev => [...prev, newUserMessage]);
     setCurrentMessage('');
+    setIsBotTyping(true);
 
-    // Simulate bot response
-    setTimeout(() => {
+    try {
+      // Prepare conversation history for context (last 10 messages)
+      const conversationHistory = messages.slice(-10).map(msg => ({
+        role: msg.sender === 'user' ? 'user' as const : 'assistant' as const,
+        content: msg.content
+      }));
+
+      // Get AI response from OpenAI
+      const aiResponse = await openaiService.generateResponse(
+        userMessageContent,
+        conversationHistory,
+        {
+          language: selectedLanguage === 'all' ? 'English' : selectedLanguage,
+          userSentiment: 'neutral',
+          userIntent: 'inquiry'
+        }
+      );
+
+      // Add bot response
       const botResponse: Message = {
         id: (Date.now() + 1).toString(),
         conversationId: '1',
         sender: 'bot',
-        content: 'Thanks for your message! 😊 Our team has received it and will respond shortly. Is there anything else you\'d like to share?',
+        content: aiResponse,
         timestamp: new Date(),
         type: 'text',
-        intent: 'acknowledgment',
-        confidence: 95,
-        language: selectedLanguage === 'all' ? 'Tamil' : selectedLanguage,
+        intent: 'response',
+        confidence: 90,
+        language: selectedLanguage === 'all' ? 'English' : selectedLanguage,
         processed: true
       };
+
       setMessages(prev => [...prev, botResponse]);
-    }, 1000);
+    } catch (error) {
+      console.error('[ConversationBot] Error getting AI response:', error);
+
+      // Fallback response on error
+      const errorResponse: Message = {
+        id: (Date.now() + 1).toString(),
+        conversationId: '1',
+        sender: 'bot',
+        content: 'I apologize, but I\'m having trouble processing your message right now. Our team has been notified and will assist you shortly. 🙏',
+        timestamp: new Date(),
+        type: 'text',
+        intent: 'error',
+        confidence: 100,
+        language: selectedLanguage === 'all' ? 'English' : selectedLanguage,
+        processed: true
+      };
+
+      setMessages(prev => [...prev, errorResponse]);
+    } finally {
+      setIsBotTyping(false);
+    }
   };
 
   const getSentimentColor = (sentiment: string) => {
@@ -586,8 +629,8 @@ export default function ConversationBot() {
                   {messages.map(message => (
                     <div key={message.id} className={`flex ${message.sender === 'user' ? 'justify-end' : 'justify-start'}`}>
                       <div className={`max-w-xs lg:max-w-md ${
-                        message.sender === 'user' 
-                          ? 'bg-blue-600 text-white' 
+                        message.sender === 'user'
+                          ? 'bg-blue-600 text-white'
                           : 'bg-gray-100 text-gray-900'
                       } rounded-lg px-4 py-2`}>
                         <div className="text-responsive-sm">{message.content}</div>
@@ -600,6 +643,20 @@ export default function ConversationBot() {
                       </div>
                     </div>
                   ))}
+
+                  {/* Typing Indicator */}
+                  {isBotTyping && (
+                    <div className="flex justify-start">
+                      <div className="bg-gray-100 text-gray-900 rounded-lg px-4 py-3">
+                        <div className="flex space-x-1">
+                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '0ms'}}></div>
+                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '150ms'}}></div>
+                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{animationDelay: '300ms'}}></div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+
                   <div ref={messagesEndRef} />
                 </div>
 
@@ -609,16 +666,17 @@ export default function ConversationBot() {
                     <div className="flex-1 relative">
                       <input
                         type="text"
-                        placeholder="Type your message..."
+                        placeholder={isBotTyping ? "Bot is typing..." : "Type your message..."}
                         value={currentMessage}
                         onChange={(e) => setCurrentMessage(e.target.value)}
                         onKeyDown={(e) => {
-                          if (e.key === 'Enter' && !e.shiftKey) {
+                          if (e.key === 'Enter' && !e.shiftKey && !isBotTyping) {
                             e.preventDefault();
                             handleSendMessage();
                           }
                         }}
-                        className="w-full p-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        disabled={isBotTyping}
+                        className="w-full p-3 pr-12 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent disabled:bg-gray-100 disabled:cursor-not-allowed"
                       />
                       <div className="absolute right-3 top-1/2 transform -translate-y-1/2 flex space-x-1">
                         <button className="p-1 text-gray-400 hover:text-gray-600">
@@ -637,8 +695,13 @@ export default function ConversationBot() {
                     >
                       {isListening ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4" />}
                     </MobileButton>
-                    
-                    <MobileButton variant="primary" size="small" onClick={handleSendMessage}>
+
+                    <MobileButton
+                      variant="primary"
+                      size="small"
+                      onClick={handleSendMessage}
+                      disabled={isBotTyping || !currentMessage.trim()}
+                    >
                       <Send className="w-4 h-4" />
                     </MobileButton>
                   </div>

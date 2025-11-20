@@ -42,14 +42,14 @@ interface SentimentAnalyticsDashboardProps {
 }
 
 const COLORS = {
-  positive: '#4caf50',
-  negative: '#f44336',
-  neutral: '#ff9800',
-  mixed: '#9c27b0',
-  support: '#2196f3',
-  against: '#f44336',
-  undecided: '#ff9800',
-  not_mentioned: '#9e9e9e',
+  positive: '#4caf50',    // Green
+  negative: '#f44336',    // Red
+  neutral: '#ffc107',     // Yellow
+  mixed: '#9c27b0',       // Purple
+  support: '#4caf50',     // Green (changed from blue)
+  against: '#f44336',     // Red
+  undecided: '#ffc107',   // Yellow (changed from orange)
+  not_mentioned: '#9e9e9e', // Gray
 };
 
 const SentimentAnalyticsDashboard: React.FC<SentimentAnalyticsDashboardProps> = ({
